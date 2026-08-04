@@ -156,6 +156,7 @@ local CHAT_DEFAULTS = {
             idleFadeStrength = 40,
             idleFadeEnabled = true,
             inputOnTop = false,
+            inputInside = false,
             lockChatSize = false,
             hideSidebarBg = false,
             sidebarIconScale = 1.0,
@@ -331,6 +332,10 @@ end
 
 local BG_R, BG_G, BG_B, BG_A = 0.03, 0.045, 0.05, 0.70
 
+-- The input reveal takes the panel's colour but floors its alpha: at a fully
+-- transparent panel there would be nothing behind the text being typed.
+local REVEAL_MIN_ALPHA = 0.5
+
 local EDIT_BG_R, EDIT_BG_G, EDIT_BG_B = 0.05, 0.065, 0.08
 
 local function GetInnerBorderColor(cfg)
@@ -420,6 +425,12 @@ function ECHAT.ApplyBackground()
                     if bgTex.SetVertexColor then bgTex:SetVertexColor(1, 1, 1, 1) end
                     bgTex:SetColorTexture(BG_R, BG_G, BG_B, BG_A)
                 end
+            end
+            -- Input reveal backing follows the same solid colour.
+            local eb = _G[cf:GetName() .. "EditBox"]
+            local revealBg = eb and CFD(eb).revealBg
+            if revealBg then
+                revealBg:SetColorTexture(BG_R, BG_G, BG_B, max(BG_A, REVEAL_MIN_ALPHA))
             end
         end
     end
@@ -635,6 +646,29 @@ function ECHAT.ApplyExtendedBackground()
                     sbBorder:Show()
                 else
                     sbBorder:Hide()
+                end
+            end
+
+            -- Input reveal edges, same thickness/colour the panel uses.
+            -- Solid only: the textured-border path needs a backdrop frame,
+            -- and a frame on the edit box is the whisper-taint injector.
+            for i = 1, 20 do
+                local icf = _G["ChatFrame" .. i]
+                local iname = icf and icf:GetName()
+                local ieb = iname and _G[iname .. "EditBox"]
+                local edges = ieb and CFD(ieb).revealEdges
+                if edges then
+                    local px = (sizes[thicknessKey] or 0) * ((PP and PP.mult) or 1)
+                    CFD(ieb).revealEdgesOn = px > 0
+                    edges[1]:SetHeight(px); edges[2]:SetHeight(px)
+                    edges[3]:SetWidth(px);  edges[4]:SetWidth(px)
+                    -- Only actual focus should reveal them, not thickness alone.
+                    local focused = ieb:HasFocus()
+                    if issecretvalue and issecretvalue(focused) then focused = false end
+                    for _, t in ipairs(edges) do
+                        t:SetColorTexture(color.r, color.g, color.b, alpha)
+                        t:SetShown(px > 0 and focused)
+                    end
                 end
             end
         else
@@ -2006,10 +2040,14 @@ function ECHAT.TogglePortalFlyout(anchorBtn)
     end
 end
 
--- Flip edit box between bottom (default) and top of chat panel
+-- Flip edit box between bottom (default) and top, and between sitting
+-- outside the panel (below it, or above it over the tab strip) and
+-- overlaying the chat text at that edge. Neither reserves an
+-- always-visible strip (see SkinEditBox's reveal).
 function ECHAT.ApplyInputPosition()
     local cfg = ECHAT.DB()
     local onTop = cfg.inputOnTop
+    local inside = cfg.inputInside
     local inputHeight = GetEditBoxHeight()
 
     for i = 1, 20 do
@@ -2023,30 +2061,39 @@ function ECHAT.ApplyInputPosition()
             local fsc = cf.FontStringContainer
             local bar = cf.ScrollBar
 
-            if eb then
+            -- Permanent docked frames only. Temp whisper windows cannot be
+            -- hooked (taint), so they get no reveal backing and no
+            -- focus-gated mouse -- moving one on top of the tab strip would
+            -- leave an invisible, backdrop-less box eating tab clicks.
+            -- They keep the skin-time placement below their own frame.
+            if eb and i <= 10 then
+                -- Anchored to cf with the same offsets bg uses below, NOT
+                -- to bg itself: bg's own BOTTOMRIGHT anchors to eb (see
+                -- SkinChatFrame), so eb -> bg would be a circular anchor --
+                -- WoW rejects it outright ("Cannot anchor to a region
+                -- dependent on it"), leaving eb unpositioned. This matches
+                -- bg's width/edge without the cycle.
                 eb:ClearAllPoints()
+                -- Outside pins the far edge to the panel so the box sits
+                -- clear of it; inside pins the near edge so it overlays the
+                -- chat text. Same two offsets either way -- only which of
+                -- the box's own edges meets the panel changes.
                 if onTop then
-                    -- Grow the shared panel upward instead of placing the
-                    -- input inside the chat frame and reducing its text area.
-                    eb:SetPoint("BOTTOMLEFT", cf, "TOPLEFT", -10, 3)
-                    eb:SetPoint("BOTTOMRIGHT", cf, "TOPRIGHT", 5, 3)
+                    eb:SetPoint(inside and "TOPLEFT" or "BOTTOMLEFT",
+                        cf, "TOPLEFT", -10, 3)
+                    eb:SetPoint(inside and "TOPRIGHT" or "BOTTOMRIGHT",
+                        cf, "TOPRIGHT", 10, 3)
                 else
-                    eb:SetPoint("TOPLEFT", cf, "BOTTOMLEFT", -10, -8)
-                    eb:SetPoint("TOPRIGHT", cf, "BOTTOMRIGHT", 5, -8)
+                    eb:SetPoint(inside and "BOTTOMLEFT" or "TOPLEFT",
+                        cf, "BOTTOMLEFT", -10, -6)
+                    eb:SetPoint(inside and "BOTTOMRIGHT" or "TOPRIGHT",
+                        cf, "BOTTOMRIGHT", 10, -6)
                 end
                 eb:SetHeight(inputHeight)
+                eb:SetFrameLevel(cf:GetFrameLevel() + 5) -- draw over the chat log
             end
 
-            if div then
-                div:ClearAllPoints()
-                if onTop then
-                    div:SetPoint("TOPLEFT", cf, "TOPLEFT", -10, 3)
-                    div:SetPoint("TOPRIGHT", cf, "TOPRIGHT", 10, 3)
-                else
-                    div:SetPoint("BOTTOMLEFT", cf, "BOTTOMLEFT", -10, -8)
-                    div:SetPoint("BOTTOMRIGHT", cf, "BOTTOMRIGHT", 10, -8)
-                end
-            end
+            if div then div:Hide() end -- no separate strip to divide
 
             if bg then
                 -- The panel is placed NUMERICALLY, not anchored to cf (see
@@ -2054,14 +2101,15 @@ function ECHAT.ApplyInputPosition()
                 -- wants and let the positioner apply them against the chat
                 -- frame's rect; anchoring here would put our frame back into
                 -- Blizzard's rect chain, which is the whole bug.
-                -- Horizontal geometry stays independent of input
-                -- position/height; only the vertical edge may expand.
+                -- No extra height reserved for the input at either edge --
+                -- the box has its own focus-gated reveal instead of a
+                -- permanent strip, so the panel always keeps cf's own bounds.
                 local d = CFD(cf)
                 d._bgIns = {
                     l = -10,
                     r = 10,
-                    t = onTop and (3 + inputHeight) or 3,
-                    b = onTop and -6 or (eb and -(12 + inputHeight) or -6),
+                    t = 3,
+                    b = -6,
                 }
                 if ECHAT.PositionChatPanel then ECHAT.PositionChatPanel(cf) end
             end
@@ -3801,8 +3849,79 @@ local function SkinEditBox(cf)
     -- skinning only. (This matches the function header's stated intent and the
     -- 1-10 header-font gate in ECHAT.ApplyFonts.)
     if idx <= 10 then
+        -- Same gap SkinChatFrame already closes on cf.Background, mirrored
+        -- here, and re-run on focus gain below -- some regions are created
+        -- lazily on first focus, not present yet at skin time. Gated with
+        -- the rest: a temp window stripped of its backing but with no
+        -- reveal to replace it would have nothing behind its typed text.
+        local function ZeroTextures(frame, skipOwned)
+            if not frame or not frame.GetRegions then return end
+            for i = 1, select("#", frame:GetRegions()) do
+                local region = select(i, frame:GetRegions())
+                if region and region:IsObjectType("Texture") and not (skipOwned and region._euiOwned) then
+                    region:SetAlpha(0)
+                end
+            end
+        end
+        local function StripEditBoxBackground()
+            ZeroTextures(eb, true)
+            if eb.Background then
+                eb.Background:SetAlpha(0)
+                ZeroTextures(eb.Background)
+            end
+        end
+        StripEditBoxBackground()
+
+        -- Shown only while typing -- idle chat shows nothing here otherwise.
+        -- _euiOwned so the sweep skips it instead of zeroing its own alpha
+        -- right before Show() runs.
+        local reveal = eb:CreateTexture(nil, "BACKGROUND")
+        reveal._euiOwned = true
+        reveal:SetAllPoints()
+        reveal:SetColorTexture(BG_R, BG_G, BG_B, max(BG_A, REVEAL_MIN_ALPHA))
+        reveal:Hide()
+        CFD(eb).revealBg = reveal
+
+        -- Border as four edge TEXTURES on the box, never a child frame:
+        -- creating a frame on a Blizzard chat frame taints the temp-whisper
+        -- chain (see WHISPER-CREATION TAINT at the top of this file --
+        -- it errors in UpdateHeader's secret whisper-name math on the very
+        -- next whisper). Textures on the frame itself are field-clean, and
+        -- these anchor to their own parent, adding no dependency edge.
+        -- Sized and coloured by ApplyExtendedBackground from the same
+        -- "Border" option the panel uses.
+        local function EdgeTex()
+            local t = eb:CreateTexture(nil, "OVERLAY", nil, 7)
+            t._euiOwned = true
+            t:Hide()
+            return t
+        end
+        local top, bottom, left, right = EdgeTex(), EdgeTex(), EdgeTex(), EdgeTex()
+        top:SetPoint("TOPLEFT");     top:SetPoint("TOPRIGHT")
+        bottom:SetPoint("BOTTOMLEFT"); bottom:SetPoint("BOTTOMRIGHT")
+        left:SetPoint("TOPLEFT");    left:SetPoint("BOTTOMLEFT")
+        right:SetPoint("TOPRIGHT");  right:SetPoint("BOTTOMRIGHT")
+        CFD(eb).revealEdges = { top, bottom, left, right }
+
+        -- Blizzard's classic chat style keeps the box shown at all times,
+        -- and it has no visible background unless focused -- so an
+        -- unfocused one is an invisible click-catcher over whatever it
+        -- sits above, the tab strip included. Mouse stays off until it
+        -- actually has focus; Enter still opens it either way.
+        eb:EnableMouse(false)
         eb:HookScript("OnEditFocusGained", function(self)
             ApplyEditBoxHeaderFont(self)
+            StripEditBoxBackground()
+            self:EnableMouse(true)
+            local d = CFD(self)
+            d.revealBg:Show()
+            for _, t in ipairs(d.revealEdges) do t:SetShown(d.revealEdgesOn) end
+        end)
+        eb:HookScript("OnEditFocusLost", function(self)
+            self:EnableMouse(false)
+            local d = CFD(self)
+            d.revealBg:Hide()
+            for _, t in ipairs(d.revealEdges) do t:Hide() end
         end)
 
         -- Plain Up/Down input recall. The Midnight edit box performs no

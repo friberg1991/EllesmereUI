@@ -1402,7 +1402,8 @@ initFrame:SetScript("OnEvent", function(self)
         -- -- INPUT FIELD -------------------------------------------------------
         _, h = W:SectionHeader(parent, "INPUT FIELD", y); y = y - h
 
-        _, h = W:DualRow(parent, y,
+        local inputRow
+        inputRow, h = W:DualRow(parent, y,
             { type="toggle", text="Input on Top",
               getValue=function() return Cfg("inputOnTop") or false end,
               setValue=function(v)
@@ -1415,6 +1416,35 @@ initFrame:SetScript("OnEvent", function(self)
                   Set("editBoxHeight", v)
                   if ECHAT.ApplyInputPosition then ECHAT.ApplyInputPosition() end
               end })
+
+        -- Inline cog on Input on Top for the inside/outside placement.
+        do
+            local rgn = inputRow._leftRegion
+            local _, cogShow = EllesmereUI.BuildCogPopup({
+                title="Input Position",
+                captureRegion=rgn,
+                rows={
+                    { type="toggle", label="Inside Chat",
+                      tooltip="Overlays the input on the chat text at that edge instead of sitting outside the panel.",
+                      get=function() return Cfg("inputInside") == true end,
+                      set=function(v)
+                          Set("inputInside", v)
+                          if ECHAT.ApplyInputPosition then ECHAT.ApplyInputPosition() end
+                      end },
+                },
+            })
+            local cogBtn = CreateFrame("Button", nil, rgn)
+            cogBtn:SetSize(26, 26)
+            cogBtn:SetPoint("RIGHT", rgn._lastInline or rgn._control, "LEFT", -8, 0)
+            rgn._lastInline = cogBtn
+            cogBtn:SetFrameLevel(rgn:GetFrameLevel() + 5)
+            cogBtn:SetAlpha(0.4)
+            local tex = cogBtn:CreateTexture(nil, "OVERLAY")
+            tex:SetAllPoints(); tex:SetTexture(EllesmereUI.COGS_ICON)
+            cogBtn:SetScript("OnEnter", function(self) self:SetAlpha(0.7) end)
+            cogBtn:SetScript("OnLeave", function(self) self:SetAlpha(0.4) end)
+            cogBtn:SetScript("OnClick", function(self) cogShow(self) end)
+        end
         y = y - h
 
         do
