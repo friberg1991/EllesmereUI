@@ -133,6 +133,7 @@ local CHAT_DEFAULTS = {
             tabBackgroundColor = { r=0.03, g=0.045, b=0.05, a=0.44 },
             tabBackgroundColorActive = { r=0.03, g=0.045, b=0.05, a=0.65 },
             disableTabFade = false,
+            lockTabs = false,
             activeUnderline = true,
             activeUnderlineColorMode = "accent",
             activeUnderlineColor = { r=0.05, g=0.82, b=0.61, a=1 },
@@ -3438,6 +3439,27 @@ function ECHAT.ApplyTabFadeOverride()
     end
 end
 
+-- lockTabs support: plain widget property, not a hook -- RegisterForDrag()
+-- with no button un-registers drag on the tab entirely, gating only
+-- OnDragStart/OnDragStop (which is what un-docks the chat frame into a
+-- floating window on a stray drag). OnClick/tab selection is a separate
+-- event path and is untouched either way.
+function ECHAT.ApplyTabDragLock()
+    local locked = ECHAT.DB().lockTabs
+    for i = 1, 10 do
+        local cf = _G["ChatFrame" .. i]
+        local name = cf and cf:GetName()
+        local tab = name and _G[name .. "Tab"]
+        if tab then
+            if locked then
+                tab:RegisterForDrag()
+            else
+                tab:RegisterForDrag("LeftButton")
+            end
+        end
+    end
+end
+
 -- One-time reskin of a Blizzard chat tab (strip textures, add our visuals)
 local function SkinTab(cf)
     local name = cf:GetName()
@@ -3555,6 +3577,14 @@ local function SkinTab(cf)
     -- ApplyTabFadeOverride) -- installs nothing when the setting is off.
     if idx and idx <= 10 and ECHAT.ApplyTabFadeOverride then
         ECHAT.ApplyTabFadeOverride()
+    end
+
+    -- lockTabs: plain widget property, permanent frames only (see
+    -- ApplyTabDragLock). Runs unconditionally -- it is not a hook and
+    -- costs nothing when off, since it just re-asserts stock's own
+    -- RegisterForDrag("LeftButton") in that case.
+    if idx and idx <= 10 and ECHAT.ApplyTabDragLock then
+        ECHAT.ApplyTabDragLock()
     end
 
     UpdateTabStyle(tab)

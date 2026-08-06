@@ -1104,7 +1104,7 @@ initFrame:SetScript("OnEvent", function(self)
                           if ECHAT.ApplyTabAppearance then ECHAT.ApplyTabAppearance() end
                       end },
                 }
-                -- Single global setting, attached to the inactive-tab cog
+                -- Single global settings, attached to the inactive-tab cog
                 -- only -- no separate active-tab copy to keep in sync.
                 if not active then
                     table.insert(rows, { type="toggle", label="Disable Tab Fade",
@@ -1112,6 +1112,13 @@ initFrame:SetScript("OnEvent", function(self)
                         set=function(v)
                             Set("disableTabFade", v)
                             if ECHAT.ApplyTabFadeOverride then ECHAT.ApplyTabFadeOverride() end
+                        end })
+                    table.insert(rows, { type="toggle", label="Lock Tabs",
+                        tooltip="Prevents a click-and-drag on a tab from undocking it into a floating window.",
+                        get=function() return Cfg("lockTabs") == true end,
+                        set=function(v)
+                            Set("lockTabs", v)
+                            if ECHAT.ApplyTabDragLock then ECHAT.ApplyTabDragLock() end
                         end })
                 end
                 local _, cogShow = EllesmereUI.BuildCogPopup({
