@@ -132,6 +132,7 @@ local CHAT_DEFAULTS = {
             scrollButtonOnChat = false,
             tabBackgroundColor = { r=0.03, g=0.045, b=0.05, a=0.44 },
             tabBackgroundColorActive = { r=0.03, g=0.045, b=0.05, a=0.65 },
+            disableTabFade = false,
             activeUnderline = true,
             activeUnderlineColorMode = "accent",
             activeUnderlineColor = { r=0.05, g=0.82, b=0.61, a=1 },
@@ -286,6 +287,18 @@ local _euiDockStyled
 -- reads those constants inside its dock-update and temp-window chains, and
 -- the tainted execution then hits secret whisper values. There is no timing
 -- or deferral fix -- the variable stays tainted whenever it is written.
+--
+-- disableTabFade (2026-08-06, opt-in, default off) is a third attempt, on a
+-- different mechanism than either dead end above: hooksecurefunc(tab,
+-- "SetAlpha", fn) per permanent tab (see the ApplyTabFadeOverride install
+-- below). It re-asserts alpha 1 AFTER Blizzard's own write instead of
+-- racing a separate driver against it,
+-- and the recursion is broken by a second SetAlpha argument (reassert)
+-- instead of writing any Blizzard global. Scoped to permanent frames (i <= 10) only
+-- -- the SetPoint hook removed from SkinTab below hit temp-whisper-creation
+-- taint through this exact same per-tab hooksecurefunc mechanism, so treat
+-- this as unproven against that scenario until an owner whisper-in-combat
+-- test says otherwise (see the SetPoint removal note in SkinTab).
 
 -- Height of the tab strip (GeneralDockManager dockH, set in StyleDockManager).
 -- Used by the "Extend Background Behind Tabs" feature to size the strip behind
@@ -3396,12 +3409,42 @@ function ECHAT.ApplyTabSeparators()
     end
 end
 
+-- disableTabFade support (see the note at the fade locals above). Re-asserts
+-- alpha 1 immediately after Blizzard's own FCFTab_UpdateAlpha write instead
+-- of racing it. reassert is the hooksecurefunc-forwarded second argument
+-- from our own tab:SetAlpha(1, true) call below -- without it every
+-- re-assert would retrigger the hook and recurse.
+local function TabFadeOverrideAlpha(tab, _, reassert)
+    if reassert then return end
+    if not ECHAT.DB().disableTabFade then return end
+    tab:SetAlpha(1, true)
+end
+
+-- Installs the hook on permanent tabs (i <= 10) only, and only once
+-- disableTabFade has actually been turned on -- zero hooks while it is off.
+-- Idempotent and safe to call repeatedly (SkinTab pass, toggle setValue).
+local _tabFadeHooked = {}
+function ECHAT.ApplyTabFadeOverride()
+    if not ECHAT.DB().disableTabFade then return end
+    for i = 1, 10 do
+        local cf = _G["ChatFrame" .. i]
+        local name = cf and cf:GetName()
+        local tab = name and _G[name .. "Tab"]
+        if tab and not _tabFadeHooked[tab] then
+            _tabFadeHooked[tab] = true
+            hooksecurefunc(tab, "SetAlpha", TabFadeOverrideAlpha)
+            tab:SetAlpha(1, true)
+        end
+    end
+end
+
 -- One-time reskin of a Blizzard chat tab (strip textures, add our visuals)
 local function SkinTab(cf)
     local name = cf:GetName()
     if not name then return end
     local tab = _G[name .. "Tab"]
     if not tab or CFD(tab).skinned then return end
+    local idx = tonumber(name:match("ChatFrame(%d+)"))
     CFD(tab).skinned = true
     CFD(tab).chatFrame = cf
     -- Strip Blizzard tab textures, but preserve the glow frame
@@ -3507,6 +3550,12 @@ local function SkinTab(cf)
     -- (deferred passes only), which is safe again precisely because the
     -- synchronous FCFDock_UpdateTabs hook is gone -- the deferred-once
     -- rewrite was stable for months pre-841 under these same conditions.
+
+    -- disableTabFade opt-in only, permanent frames only (see
+    -- ApplyTabFadeOverride) -- installs nothing when the setting is off.
+    if idx and idx <= 10 and ECHAT.ApplyTabFadeOverride then
+        ECHAT.ApplyTabFadeOverride()
+    end
 
     UpdateTabStyle(tab)
     ECHAT.ApplyTabBorders()

@@ -1091,22 +1091,33 @@ initFrame:SetScript("OnEvent", function(self)
             local function AttachTabBgOpacityCog(rgn, active)
                 local key = active and "tabBackgroundColorActive" or "tabBackgroundColor"
                 local fallback = TAB_BG_FALLBACK[active]
+                local rows = {
+                    { type="slider", label="Opacity", min=0, max=100, step=1,
+                      get=function()
+                          local c=Cfg(key) or fallback
+                          local a=c.a == nil and fallback.a or c.a
+                          return math.floor(a*100+0.5)
+                      end,
+                      set=function(v)
+                          local c=Cfg(key) or fallback
+                          Set(key,{r=c.r,g=c.g,b=c.b,a=v/100})
+                          if ECHAT.ApplyTabAppearance then ECHAT.ApplyTabAppearance() end
+                      end },
+                }
+                -- Single global setting, attached to the inactive-tab cog
+                -- only -- no separate active-tab copy to keep in sync.
+                if not active then
+                    table.insert(rows, { type="toggle", label="Disable Tab Fade",
+                        get=function() return Cfg("disableTabFade") == true end,
+                        set=function(v)
+                            Set("disableTabFade", v)
+                            if ECHAT.ApplyTabFadeOverride then ECHAT.ApplyTabFadeOverride() end
+                        end })
+                end
                 local _, cogShow = EllesmereUI.BuildCogPopup({
                     title=active and "Active Tab Background" or "Tab Background",
                     captureRegion=rgn,
-                    rows={
-                        { type="slider", label="Opacity", min=0, max=100, step=1,
-                          get=function()
-                              local c=Cfg(key) or fallback
-                              local a=c.a == nil and fallback.a or c.a
-                              return math.floor(a*100+0.5)
-                          end,
-                          set=function(v)
-                              local c=Cfg(key) or fallback
-                              Set(key,{r=c.r,g=c.g,b=c.b,a=v/100})
-                              if ECHAT.ApplyTabAppearance then ECHAT.ApplyTabAppearance() end
-                          end },
-                    },
+                    rows=rows,
                 })
                 local cogBtn = CreateFrame("Button", nil, rgn)
                 cogBtn:SetSize(26,26)
