@@ -10170,6 +10170,23 @@ local function UpdateFlipbook(btn)
     local p = EAB.db and EAB.db.profile
     if not p then return end
 
+    -- Off draws nothing, so it short-circuits before the size math. Blizzard
+    -- re-shows its own region on every proc and HideGlow resets its alpha when
+    -- one ends, so both have to be put back down on each pass.
+    if p.procGlowOff then
+        local wrapper = fd.glowWrapper
+        if wrapper then
+            StopAllProceduralGlows(wrapper)
+            wrapper:Hide()
+        end
+        if region then
+            region:SetAlpha(0)
+            region:Hide()
+        end
+        fd.customizedFlipbook = true
+        return
+    end
+
     -- Size from profile settings, not btn:GetWidth(): on initial login the
     -- frame may not be sized by LayoutBar yet and GetWidth returns the
     -- default 45. Replicates LayoutBar's shape expansion/cropped math so the

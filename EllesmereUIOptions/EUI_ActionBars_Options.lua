@@ -5176,8 +5176,8 @@ initFrame:SetScript("OnEvent", function(self)
     local interactionTypeOrder  = { 1, 2, 3, 4, 5, 6 }
     local pushedTypeValues, pushedTypeOrder = interactionTypeValues, interactionTypeOrder
     local highlightTypeValues, highlightTypeOrder = interactionTypeValues, interactionTypeOrder
-    local procGlowValues = { [0] = "None" }
-    local procGlowOrder = { 0 }
+    local procGlowValues = { [-1] = "Off", [0] = "Default" }
+    local procGlowOrder = { -1, 0 }
     do
         for i, entry in ipairs(ns.LOOP_GLOW_TYPES) do
             if not entry.shapeGlow then          -- Shape Glow is internal-only
@@ -5349,8 +5349,8 @@ initFrame:SetScript("OnEvent", function(self)
         ns.Glows.StopAutoCastShine(f)
         ns.Glows.StopShapeGlow(f)
 
-        -- If disabled (None selected), keep the icon visible but grayed out
-        if p.procGlowEnabled == false or (p.procGlowType == 0) then
+        -- If disabled (Off or Default selected), keep the icon visible but grayed out
+        if p.procGlowOff or p.procGlowEnabled == false or (p.procGlowType == 0) then
             f:Show()
             f:SetAlpha(0.15)
             return
@@ -5664,7 +5664,7 @@ initFrame:SetScript("OnEvent", function(self)
         -------------------------------------------------------------------
         _, h = W:SectionHeader(parent, SECTION_PROC_GLOW, y);  y = y - h
 
-        local function procGlowOff() return (p.procGlowType == 0) or (p.procGlowEnabled == false) end
+        local function procGlowOff() return p.procGlowOff or (p.procGlowType == 0) or (p.procGlowEnabled == false) end
 
         local function AnyBarHasCustomShape()
             local bars = EAB.db.profile.bars
@@ -5686,9 +5686,22 @@ initFrame:SetScript("OnEvent", function(self)
                   return "Custom shapes always use Shape Glow -- change your bar shape to None or Cropped to pick a different glow"
               end,
               rawTooltip=true,
-              getValue=function() if p.procGlowEnabled == false then return 0 end; return p.procGlowType or 1 end,
+              getValue=function()
+                  if p.procGlowOff then return -1 end
+                  if p.procGlowEnabled == false then return 0 end
+                  return p.procGlowType or 1
+              end,
               setValue=function(v)
-                  local wasOff = (p.procGlowType == 0) or (p.procGlowEnabled == false)
+                  if v == -1 then
+                      p.procGlowOff = true
+                      p.procGlowEnabled = false
+                      EAB:RefreshProcGlows()
+                      UpdateProcGlowPreview(_procGlowPreview)
+                      C_Timer.After(0, function() EllesmereUI:RefreshPage() end)
+                      return
+                  end
+                  local wasOff = p.procGlowOff or (p.procGlowType == 0) or (p.procGlowEnabled == false)
+                  p.procGlowOff = nil
                   local turningOn = wasOff and v ~= 0
                   if turningOn then
                       EllesmereUI:ShowConfirmPopup({
