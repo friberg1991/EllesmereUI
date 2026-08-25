@@ -276,6 +276,10 @@ end
 
 local BG_R, BG_G, BG_B, BG_A = 0.03, 0.045, 0.05, 0.70
 
+-- The input reveal takes the panel's colour but floors its alpha: at a fully
+-- transparent panel there would be nothing behind the text being typed.
+local REVEAL_MIN_ALPHA = 0.5
+
 local EDIT_BG_R, EDIT_BG_G, EDIT_BG_B = 0.05, 0.065, 0.08
 
 local function GetInnerBorderColor(cfg)
@@ -363,6 +367,12 @@ function ECHAT.ApplyBackground()
                     if bgTex.SetVertexColor then bgTex:SetVertexColor(1, 1, 1, 1) end
                     bgTex:SetColorTexture(BG_R, BG_G, BG_B, BG_A)
                 end
+            end
+            -- Input reveal backing follows the same solid colour.
+            local eb = _G[cf:GetName() .. "EditBox"]
+            local revealBg = eb and CFD(eb).revealBg
+            if revealBg then
+                revealBg:SetColorTexture(BG_R, BG_G, BG_B, max(BG_A, REVEAL_MIN_ALPHA))
             end
         end
     end
@@ -571,6 +581,29 @@ function ECHAT.ApplyExtendedBackground()
                     sbBorder:Hide()
                 end
             end
+
+            -- Input reveal edges, same thickness/colour the panel uses.
+            -- Solid only: the textured-border path needs a backdrop frame,
+            -- and a frame on the edit box is the whisper-taint injector.
+            for i = 1, 20 do
+                local icf = _G["ChatFrame" .. i]
+                local iname = icf and icf:GetName()
+                local ieb = iname and _G[iname .. "EditBox"]
+                local edges = ieb and CFD(ieb).revealEdges
+                if edges then
+                    local px = (sizes[thicknessKey] or 0) * ((PP and PP.mult) or 1)
+                    CFD(ieb).revealEdgesOn = px > 0
+                    edges[1]:SetHeight(px); edges[2]:SetHeight(px)
+                    edges[3]:SetWidth(px);  edges[4]:SetWidth(px)
+                    -- Only actual focus should reveal them, not thickness alone.
+                    local focused = ieb:HasFocus()
+                    if issecretvalue and issecretvalue(focused) then focused = false end
+                    for _, t in ipairs(edges) do
+                        t:SetColorTexture(color.r, color.g, color.b, alpha)
+                        t:SetShown(px > 0 and focused)
+                    end
+                end
+            end
         else
             if EllesmereUI.ApplyBorderStyle then
                 EllesmereUI.ApplyBorderStyle(border, 0, 1, 1, 1, 0, cfg.panelBorderTexture or "solid")
@@ -772,11 +805,11 @@ function ECHAT.ApplyBorders()
         end
         if cf and CFD(cf).inputDiv then
             CFD(cf).inputDiv:SetColorTexture(r, g, b, a)
-            -- Input-on-top: the divider marks the overlaid input's edge, so it
-            -- shares that input's shown state (ECHAT.ApplyInputTopStrip) --
-            -- otherwise it cuts across a message once the strip is released.
-            CFD(cf).inputDiv:SetShown(not hide
-                and (not cfg.inputOnTop or ECHAT.InputTopStripActive(cf)))
+            -- The divider marked the edge of the strip reserved for the input,
+            -- and nothing reserves one now (ECHAT.ApplyInputTopStrip) -- the box
+            -- overlays the messages and carries its own border while it is up,
+            -- so a permanent line here would just cut across a message.
+            CFD(cf).inputDiv:Hide()
         end
     end
     local cf1 = _G.ChatFrame1
@@ -2783,18 +2816,19 @@ end
 function ECHAT.ApplyInputTopStrip(cf)
     local d = CFD(cf)
     if not d.bg then return end
-    local cfg = ECHAT.DB()
-    local active = ECHAT.InputTopStripActive(cf)
-    -- The strip reaches INPUT_TOP_DROP further than the box is tall, since the
-    -- box starts that far down from cf's top edge.
-    local want = active and (GetEditBoxHeight() + 4 + INPUT_TOP_DROP) or nil
-    local changed = d._smfTopExtra ~= want
-    d._smfTopExtra = want
-    -- The `not cfg.inputOnTop` arm is load-bearing, not redundant: bottom mode
-    -- leaves the divider to ApplyBorders, and the toggle-off pass reaches here
-    -- without ever calling it -- dropping the arm strands the divider hidden.
+    -- The input OVERLAYS the text area instead of reserving a strip out of it.
+    -- With the focus-gated reveal (see SkinEditBox) an idle box draws nothing,
+    -- so the lines it sits over stay readable and the text area keeps its full
+    -- height -- reserving the strip clipped the top line permanently, for a box
+    -- that is only visible while actually typing. Nothing is handed back, so
+    -- nothing has to be reclaimed either.
+    local changed = d._smfTopExtra ~= nil
+    d._smfTopExtra = nil
+    -- Same reasoning for the divider: it marked the reserved strip's edge, and
+    -- with no strip it is just a line drawn across the messages. The reveal
+    -- carries its own border while the box is up.
     if d.inputDiv then
-        d.inputDiv:SetShown(not cfg.hideBorders and (not cfg.inputOnTop or active))
+        d.inputDiv:Hide()
     end
     if changed and ECHAT.EngineLayoutWindow then ECHAT.EngineLayoutWindow(cf) end
 end
@@ -2861,12 +2895,15 @@ function ECHAT.ApplyInputPosition()
                 -- rect. Anchoring here would put our frame back into
                 -- Blizzard's rect chain -- the whole bug. Only the vertical
                 -- edge may expand; horizontal geometry stays independent.
+                -- No extra height reserved for the input at either edge: the
+                -- box has its own focus-gated reveal instead of a permanent
+                -- strip, so the panel always keeps cf's own bounds.
                 local d = CFD(cf)
                 d._bgIns = {
                     l = -10,
                     r = 10,
                     t = 3,
-                    b = onTop and -6 or (eb and -(12 + inputHeight) or -6),
+                    b = -6,
                 }
                 -- Input-on-top: the panel keeps its normal rect; only OUR
                 -- message frame's text area shrinks under the overlaid input,
@@ -3914,8 +3951,79 @@ local function SkinEditBox(cf)
     -- HistoryKeeper for the rest of the session. Only permanent docked frames
     -- (1-10) may be hooked; temp windows (11+) get visuals only.
     if idx <= 10 then
+        -- Same gap SkinChatFrame already closes on cf.Background, mirrored
+        -- here, and re-run on focus gain below -- some regions are created
+        -- lazily on first focus, not present yet at skin time. Gated with
+        -- the rest: a temp window stripped of its backing but with no
+        -- reveal to replace it would have nothing behind its typed text.
+        local function ZeroTextures(frame, skipOwned)
+            if not frame or not frame.GetRegions then return end
+            for i = 1, select("#", frame:GetRegions()) do
+                local region = select(i, frame:GetRegions())
+                if region and region:IsObjectType("Texture") and not (skipOwned and region._euiOwned) then
+                    region:SetAlpha(0)
+                end
+            end
+        end
+        local function StripEditBoxBackground()
+            ZeroTextures(eb, true)
+            if eb.Background then
+                eb.Background:SetAlpha(0)
+                ZeroTextures(eb.Background)
+            end
+        end
+        StripEditBoxBackground()
+
+        -- Shown only while typing -- idle chat shows nothing here otherwise.
+        -- _euiOwned so the sweep skips it instead of zeroing its own alpha
+        -- right before Show() runs.
+        local reveal = eb:CreateTexture(nil, "BACKGROUND")
+        reveal._euiOwned = true
+        reveal:SetAllPoints()
+        reveal:SetColorTexture(BG_R, BG_G, BG_B, max(BG_A, REVEAL_MIN_ALPHA))
+        reveal:Hide()
+        CFD(eb).revealBg = reveal
+
+        -- Border as four edge TEXTURES on the box, never a child frame:
+        -- creating a frame on a Blizzard chat frame taints the temp-whisper
+        -- chain (see WHISPER-CREATION TAINT at the top of this file -- it
+        -- errors in UpdateHeader's secret whisper-name math on the very next
+        -- whisper). Textures on the frame itself are field-clean, and these
+        -- anchor to their own parent, adding no dependency edge. Sized and
+        -- coloured by ApplyExtendedBackground from the same "Border" option
+        -- the panel uses.
+        local function EdgeTex()
+            local t = eb:CreateTexture(nil, "OVERLAY", nil, 7)
+            t._euiOwned = true
+            t:Hide()
+            return t
+        end
+        local top, bottom, left, right = EdgeTex(), EdgeTex(), EdgeTex(), EdgeTex()
+        top:SetPoint("TOPLEFT");       top:SetPoint("TOPRIGHT")
+        bottom:SetPoint("BOTTOMLEFT"); bottom:SetPoint("BOTTOMRIGHT")
+        left:SetPoint("TOPLEFT");      left:SetPoint("BOTTOMLEFT")
+        right:SetPoint("TOPRIGHT");    right:SetPoint("BOTTOMRIGHT")
+        CFD(eb).revealEdges = { top, bottom, left, right }
+
+        -- Blizzard's classic chat style keeps the box shown at all times, and
+        -- with its background stripped an unfocused one is an invisible
+        -- click-catcher over whatever it sits above -- the tab strip included
+        -- once the input is on top. Mouse stays off until it actually has
+        -- focus; Enter still opens it either way.
+        eb:EnableMouse(false)
         eb:HookScript("OnEditFocusGained", function(self)
             ApplyEditBoxHeaderFont(self)
+            StripEditBoxBackground()
+            self:EnableMouse(true)
+            local d = CFD(self)
+            d.revealBg:Show()
+            for _, t in ipairs(d.revealEdges) do t:SetShown(d.revealEdgesOn) end
+        end)
+        eb:HookScript("OnEditFocusLost", function(self)
+            self:EnableMouse(false)
+            local d = CFD(self)
+            d.revealBg:Hide()
+            for _, t in ipairs(d.revealEdges) do t:Hide() end
         end)
 
         -- Input-on-top: reclaim/release the reserved top strip of the text
