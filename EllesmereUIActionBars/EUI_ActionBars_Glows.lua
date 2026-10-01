@@ -71,6 +71,14 @@ local function UpdateFlipbook(btn)
     local p = EAB.db and EAB.db.profile
     if not p then return end
 
+    -- Off: no glow. Untrack the button so the ShowAlert hook hides Blizzard's alert.
+    if p.procGlowType == -1 then
+        _procState.active[btn] = nil
+        if fd.glowWrapper then StopAllProceduralGlows(fd.glowWrapper) end
+        if region then region:SetAlpha(0) end
+        return
+    end
+
     -- Size from profile settings, not btn:GetWidth(): on initial login the
     -- frame may not be sized by LayoutBar yet and GetWidth returns the
     -- default 45. Replicates LayoutBar's shape expansion/cropped math so the
@@ -352,6 +360,8 @@ function EAB:HookProcGlow()
         end
     end
     glowFrame:SetScript("OnEvent", function(_, event, arg1)
+        -- Off shows no glow: skip the scans. HIDE still runs, to clear a leftover glow.
+        if event ~= "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" and EAB.db.profile.procGlowType == -1 then return end
         if event == "ACTIONBAR_SLOT_CHANGED" or event == "ACTIONBAR_PAGE_CHANGED" or event == "UPDATE_BONUS_ACTIONBAR" or event == "SPELL_UPDATE_ICON" then
             -- Defer the re-scan: paging may not have finished when the event
             -- fires, so slot->spell mappings are stale. Min 0.25s between

@@ -33,7 +33,7 @@ local function InitAnimationsPage(PP, EAB, PAGE_ANIMATIONS)
         return false
     end
     local procGlowDesc = {
-        host = "icon", excludes = { [4] = true },
+        host = "icon", noNone = true, noneValue = -1, excludes = { [4] = true },
         disabled = function() return EllesmereUI.BlizzStyle.Get("actionbars") end,
         disabledTooltip = function() return EllesmereUI.DisabledTooltip(EllesmereUI.BlizzStyle.Label("actionbars"), "disabled") end,
         rawTooltip = true,
@@ -43,11 +43,12 @@ local function InitAnimationsPage(PP, EAB, PAGE_ANIMATIONS)
         styleDisabledTooltip = "Custom shapes always use Shape Glow -- change your bar shape to None or Cropped to pick a different glow",
         caps = { mode = true, params = true, bg = true },
         defaultColor = { r = 1, g = 0.776, b = 0.376 },
-        isOff = function() local p = ProcP(); return p.procGlowEnabled == false or p.procGlowType == 0 end,
+        -- Default: the default proc glow, custom glow off. Off (the none value): no glow.
+        extras = { { value = 0, label = "Default" }, { value = -1, label = "Off" } },
         onChange = function() EAB:RefreshProcGlows(); UpdateProcGlowPreview(_procGlowPreview) end,
         get = function(f)
             local p = ProcP()
-            if f == "style" then return p.procGlowType or 1
+            if f == "style" then return (p.procGlowEnabled == false and p.procGlowType ~= -1) and 0 or p.procGlowType or 1
             elseif f == "mode" then
                 -- The class flag alone decides Class, so a spec override that
                 -- holds only the flag keeps applying; the mode key tells Default
@@ -61,7 +62,10 @@ local function InitAnimationsPage(PP, EAB, PAGE_ANIMATIONS)
         end,
         set = function(f, a, b2, c2)
             local p = ProcP()
-            if f == "style" then p.procGlowType = a; p.procGlowEnabled = (a ~= 0)
+            if f == "style" then
+                -- Leaving Off: nothing was tracked, so rescan for procs already up.
+                if p.procGlowType == -1 and ns._eabQueueGlowRescan then ns._eabQueueGlowRescan() end
+                p.procGlowType = a; p.procGlowEnabled = (a > 0)
             elseif f == "mode" then
                 -- The class flag stays in step (Bar Interactions' unified class toggle writes it too).
                 p.procGlowColorMode = a
@@ -71,7 +75,7 @@ local function InitAnimationsPage(PP, EAB, PAGE_ANIMATIONS)
         end,
         confirm = function(v, commit)
             local p = ProcP()
-            if ((p.procGlowType == 0) or (p.procGlowEnabled == false)) and v ~= 0 then
+            if ((p.procGlowType == 0) or (p.procGlowEnabled == false)) and v > 0 then
                 EllesmereUI:ShowConfirmPopup({
                     title       = "Custom Proc Glow Settings",
                     message     = "Custom proc glow may cause a slight loss in performance efficiency. Do you want to enable it?",
@@ -497,7 +501,7 @@ local function InitAnimationsPage(PP, EAB, PAGE_ANIMATIONS)
         -------------------------------------------------------------------
         _, h = W:SectionHeader(parent, SECTION_PROC_GLOW, y);  y = y - h
 
-        local procSpec = GO.DropdownSpec(procGlowDesc, "Custom Proc Glow")
+        local procSpec = GO.DropdownSpec(procGlowDesc, "Custom Proc Glow", "Default shows the standard proc glow. Off hides proc glows.")
         local function AssistOff()
             return not (GetCVarBool and GetCVarBool("assistedCombatHighlight"))
         end
