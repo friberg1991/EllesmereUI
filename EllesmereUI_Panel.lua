@@ -1581,10 +1581,10 @@ local function CreateMainFrame()
         end
     end
 
-    -- Create a group header row (accent-colored label only, no icon, no power,
-    -- not clickable). Acts as a visual category divider above its children.
+    -- Create a group header row (accent-colored label only, no icon, no power).
+    -- Acts as a visual category divider above its children; a Ctrl-click collapses them.
     local function CreateGroupHeader(group)
-        local row = CreateFrame("Frame", nil, addonScrollChild)
+        local row = CreateFrame("Button", nil, addonScrollChild)
         row:SetSize(SIDEBAR_W, GROUP_ROW_H)
         row:SetFrameLevel(addonScrollChild:GetFrameLevel() + 1)
 
@@ -1595,6 +1595,29 @@ local function CreateMainFrame()
         RegAccent({ type="callback", fn = function(r, g, b)
             label:SetTextColor(r, g, b, 1)
         end })
+        row:SetScript("OnClick", function(self)
+            if not IsControlKeyDown() then return end
+            EUI_NS.ToggleSidebarGroup(group.key)
+            if self:IsMouseOver() then self:GetScript("OnEnter")(self) end
+        end)
+        -- The tooltip names the click; a collapsed group lists its children above it.
+        row:SetScript("OnEnter", function(self)
+            if not EllesmereUI.ShowWidgetTooltip then return end
+            local tip = EllesmereUI.L("Ctrl-click to collapse")
+            if self._collapsed then
+                local names = {}
+                for _, folder in ipairs(group.members) do
+                    local info = EUI_NS.navInfo[folder]
+                    if info then names[#names + 1] = EllesmereUI.L(info.display) end
+                end
+                names[#names + 1] = "|cff888888" .. EllesmereUI.L("Ctrl-click to expand") .. "|r"
+                tip = table.concat(names, "\n")
+            end
+            EllesmereUI.ShowWidgetTooltip(self, tip, { anchor = "left", justify = "LEFT" })
+        end)
+        row:SetScript("OnLeave", function()
+            if EllesmereUI.HideWidgetTooltip then EllesmereUI.HideWidgetTooltip() end
+        end)
 
         row._isGroup = true
         row._label   = label
@@ -4529,14 +4552,20 @@ local function RefreshSidebarStates()
     local GROUP_H   = EllesmereUI.SIDEBAR_GROUP_ROW_H
     local CHILD_H   = EllesmereUI.SIDEBAR_CHILD_ROW_H
     local GROUP_GAP = EllesmereUI.SIDEBAR_GROUP_GAP
+    local collapsedGroups = EllesmereUIDB and EllesmereUIDB.sidebarCollapsedGroups
     local y = 0
     for i, group in ipairs(EUI_NS.navGroups) do
         if i > 1 then y = y + GROUP_GAP end
+        local collapsed = collapsedGroups and collapsedGroups[group.key] or false
         local header = groupHeaders[group.key]
         if header then
             header:ClearAllPoints()
             header:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -y)
             header:Show()
+            if header._collapsed ~= collapsed then
+                header._collapsed = collapsed
+                header._label:SetAlpha(collapsed and 0.5 or 1)
+            end
             y = y + GROUP_H
         end
         for _, folder in ipairs(group.members) do
@@ -4545,8 +4574,8 @@ local function RefreshSidebarStates()
             if btn then
                 btn:ClearAllPoints()
                 btn:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -y)
-                btn:Show()
-                y = y + CHILD_H
+                btn:SetShown(not collapsed)
+                if not collapsed then y = y + CHILD_H end
 
                 local loaded = info.alwaysLoaded or IsAddonLoaded(info.folder)
                 local isSpecial = info.comingSoon or info.maintenance
@@ -4604,6 +4633,22 @@ local function RefreshSidebarStates()
     if EllesmereUI.RefreshSidebarOverrideLocks then
         EllesmereUI.RefreshSidebarOverrideLocks()
     end
+end
+
+-- Collapse or expand a sidebar group (a Ctrl-click on its header). Saved per account.
+function EUI_NS.ToggleSidebarGroup(key)
+    if not EllesmereUIDB then return end
+    local groups = EllesmereUIDB.sidebarCollapsedGroups or {}
+    EllesmereUIDB.sidebarCollapsedGroups = groups
+    groups[key] = not groups[key] or nil
+    EllesmereUI.HideWidgetTooltip()
+    RefreshSidebarStates()
+    -- A collapse can leave the list scrolled past its new end.
+    local scroll, child = EllesmereUI._addonScrollFrame, EllesmereUI._addonScrollChild
+    local scale = scroll:GetEffectiveScale()
+    local maxScroll = math.max(0, child:GetHeight() - scroll:GetHeight())
+    maxScroll = math.floor(maxScroll * scale) / scale
+    if scroll:GetVerticalScroll() > maxScroll then scroll:SetVerticalScroll(maxScroll) end
 end
 
 -----------------------------------------------------------------------
