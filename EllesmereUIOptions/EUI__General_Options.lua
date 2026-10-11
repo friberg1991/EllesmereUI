@@ -2171,7 +2171,7 @@ initFrame:SetScript("OnEvent", function(self)
                 "autoRepairGuild", "hideScreenshotStatus", "autoUnwrapCollections",
                 "trainAllButton", "ahCurrentExpansion", "quickLoot",
                 "autoFillDelete", "skipCinematics", "skipCinematicsAuto",
-                "bonusRollConfirmation", "bonusRollOnly",
+                "bonusRollConfirmation", "bonusRollOnly", "bulkBuy",
                 "autoInsertKeystone", "quickSignup",
                 "persistSignupNote", "signupNote", "hideBlizzardPartyFrame",
                 "instanceResetAnnounce", "instanceResetAnnounceMsg",

@@ -16,6 +16,7 @@ EllesmereUIQoL_Cursor.lua
 EllesmereUIQoL_BattleRes.lua
 EllesmereUIQoL_Bloodlust.lua
 EllesmereUIQoL_AutoLogging.lua
+EllesmereUIQoL_BulkBuy.lua
 EllesmereUIQoL_Keys.lua
 EllesmereUIQoL_TeleportPrompt.lua
 EllesmereUIQoL_Waypoint.lua

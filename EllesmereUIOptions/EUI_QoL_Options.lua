@@ -2425,8 +2425,8 @@ initFrame:SetScript("OnEvent", function(self)
             })
         end
 
-        -- Bonus Roll Confirmation. Not offered on WoW Forever: no bonus rolls
-        -- there, so the row is not built and the runtime block does not exist.
+        -- Bonus Roll Confirmation | Buy in Bulk. Not offered on WoW Forever: no
+        -- bonus rolls there, so the row is not built and neither runtime exists.
         if not EllesmereUI.IS_FOREVER then
         local bonusRollRow
         local function bonusRollConflict()
@@ -2447,7 +2447,16 @@ initFrame:SetScript("OnEvent", function(self)
                   if EllesmereUI._applyBonusRollConfirmation then EllesmereUI._applyBonusRollConfirmation() end
                   EllesmereUI:RefreshPage()
               end },
-            EllesmereUI.BlankRowCfg()
+            { type="toggle", text=EllesmereUI.L("Buy in Bulk"),
+              tooltip=EllesmereUI.L("Shift-click a vendor's item to open a small window and buy any amount of it."),
+              getValue=function()
+                  return EllesmereUIDB and EllesmereUIDB.bulkBuy == true
+              end,
+              setValue=function(v)
+                  if not EllesmereUIDB then EllesmereUIDB = {} end
+                  EllesmereUIDB.bulkBuy = v
+                  if EllesmereUI._applyBulkBuy then EllesmereUI._applyBulkBuy() end
+              end }
         );  y = y - h
         if not EllesmereUI._prebuilding then
             EllesmereUI.BuildInlineCog(bonusRollRow._leftRegion, {
@@ -2569,6 +2578,7 @@ initFrame:SetScript("OnEvent", function(self)
                 EllesmereUIDB.autoOpenContainers = false
                 EllesmereUIDB.bonusRollConfirmation = false
                 EllesmereUIDB.bonusRollOnly = true
+                EllesmereUIDB.bulkBuy = false
                 EllesmereUIDB.autoOpenContainersExcludeWarbound = true
                 EllesmereUIDB.autoOpenContainersHoldCappedArtisanPayouts = false
                 EllesmereUIDB.autoRepairGuild = false
@@ -2643,6 +2653,7 @@ initFrame:SetScript("OnEvent", function(self)
             if _G._EUI_BattleRes_Reset then _G._EUI_BattleRes_Reset() end
             EllesmereUI._applyHideBlizzardPartyFrame()
             if EllesmereUI._applyBonusRollConfirmation then EllesmereUI._applyBonusRollConfirmation() end
+            if EllesmereUI._applyBulkBuy then EllesmereUI._applyBulkBuy() end
             if EllesmereUI._applyHideErrorMessages then EllesmereUI._applyHideErrorMessages() end
             if EllesmereUI._applyAnnounceGroupDeaths then EllesmereUI._applyAnnounceGroupDeaths() end
             if EllesmereUI._applyCombatAlert then EllesmereUI._applyCombatAlert() end
