@@ -765,13 +765,14 @@ do
         titledCount[mode] = titledCount[mode] + 1
         return s
     end
-    local aFormat, aMode, aBrackets, aLevel, aDiff, stamped
+    local aFormat, aMode, aBrackets, aLevel, aDiff, aOwn, stamped
     StampFriendlyNames = function()
         local fp = FP()
         if not fp then return end
         aFormat, aMode = fp.friendlyNameFormat, fp.friendlyBelowName or "none"
         aBrackets, stamped = fp.friendlyBelowNameGuildBrackets ~= false, true
         aLevel, aDiff = fp.friendlyShowLevel == true, fp.friendlyLevelDiffColor == true
+        aOwn = fp.friendlyGuildNameOnlySize
     end
     -- The Name Format options rows and every settings re-read (ns.RefreshAllSettings:
     -- profile switches, Spec Overrides). Before the first record it only records.
@@ -782,7 +783,8 @@ do
         if fp.friendlyNameFormat == aFormat and (fp.friendlyBelowName or "none") == aMode
             and (fp.friendlyBelowNameGuildBrackets ~= false) == aBrackets
             and (fp.friendlyShowLevel == true) == aLevel
-            and (fp.friendlyLevelDiffColor == true) == aDiff then
+            and (fp.friendlyLevelDiffColor == true) == aDiff
+            and fp.friendlyGuildNameOnlySize == aOwn then
             return
         end
         ns.RefreshFriendlyBelowName()
@@ -823,14 +825,61 @@ end
 --
 --  Cost of the approach: one FontString means ONE font size, so the guild
 --  line renders at the name's size here (its colour still applies, via an
---  inline colour escape). The Guild Text Size setting governs full-plate
---  mode, which draws its own separate FontString.
+--  inline colour escape). A name-only Guild Text Size (friendlyGuildNameOnlySize)
+--  moves the guild to a FontString of our own instead (guildLines below).
 --
 --  The unit token and last-written text for a Blizzard name FontString ride
 --  external weak-keyed tables -- never custom keys on the Blizzard widget.
 -------------------------------------------------------------------------------
 local nameFSUnits = setmetatable({}, { __mode = "k" })   -- nameFS -> unit token
 local nameFSText  = setmetatable({}, { __mode = "k" })   -- nameFS -> { name=, guild= }
+
+-- Name-only guild lines (friendlyGuildNameOnlySize set): one FontString per
+-- Blizzard name FontString, hung off the name's parent centre (where
+-- FixNameSizing pins the name). A size / font / slug change re-applies the
+-- family to every built line; a new line takes the current one at its build.
+local guildLines = setmetatable({}, { __mode = "k" })    -- nameFS -> FontString
+local _glFile, _glSize, _glFlags
+local function GuildOwnLineSize()
+    local fp = FP()
+    return fp and fp.friendlyGuildNameOnlySize
+end
+local function ApplyGuildLineFont()
+    local size = GuildOwnLineSize()
+    if not size then return end
+    local file = GetFont()
+    local flags = (EllesmereUI.SlugFlag("OUTLINE, SLUG")) or "OUTLINE, SLUG"
+    if file == _glFile and size == _glSize and flags == _glFlags then return end
+    _glFile, _glSize, _glFlags = file, size, flags
+    for _, fs in pairs(guildLines) do
+        EllesmereUI.SetFontFamily(fs, file, size, flags, false)
+    end
+end
+local function HideGuildLine(nameFS)
+    local fs = guildLines[nameFS]
+    if fs and fs:IsShown() then fs:SetText(""); fs:Hide() end
+end
+local function ShowGuildLine(nameFS, body, guild, r, g, b)
+    local fs = guildLines[nameFS]
+    if not fs then
+        local parent = nameFS:GetParent()
+        if not parent or parent:IsForbidden() then return end
+        local host = CreateFrame("Frame", nil, parent)
+        host:SetAllPoints(parent)
+        fs = host:CreateFontString(nil, "OVERLAY")
+        fs:SetWordWrap(false)
+        fs:SetMaxLines(1)
+        ApplyGuildLineFont()
+        guildLines[nameFS] = fs
+        EllesmereUI.SetFontFamily(fs, _glFile, _glSize, _glFlags, false)
+    end
+    ApplyGuildLineFont()
+    fs:ClearAllPoints()
+    fs:SetPoint("TOP", fs:GetParent(), "CENTER", 0, -(GetFriendlyNameSize() / 2 + 1))
+    fs:SetFormattedText(body, guild)
+    fs:SetTextColor(r, g, b)
+    fs:Show()
+end
 local hookedNameText = {}   -- nameFS -> true (permanent hooks, applied once)
 local _titledNameGuard = false
 
@@ -839,11 +888,11 @@ local _titledNameGuard = false
 -- Subtitle Text setting off this resolves to the plain single-line name.
 local function UpdateNameOnlyText(nameFS)
     local unit = nameFSUnits[nameFS]
-    if not unit or not UnitExists(unit) then return end
+    if not unit or not UnitExists(unit) then HideGuildLine(nameFS); return end
     -- Nameplate tokens are recycled: a plate reused for an enemy keeps our
     -- hook and a stale friendly token, so never write on a hostile unit
     -- (Blizzard's own name write is already correct there).
-    if UnitCanAttack("player", unit) then return end
+    if UnitCanAttack("player", unit) then HideGuildLine(nameFS); return end
     local mode = GetBelowNameMode()
     local isPlayer = UnitIsPlayer(unit)
 
@@ -870,13 +919,21 @@ local function UpdateNameOnlyText(nameFS)
     -- touching a secret with ==.
     local guildKey = guild
     if guildKey ~= nil and issecretvalue and issecretvalue(guildKey) then guildKey = true end
+    local ownLine = GuildOwnLineSize()
     local st = nameFSText[nameFS]
-    if st and st.name == want and st.guild == guildKey then return end
+    if st and st.name == want and st.guild == guildKey and st.own == ownLine then return end
     if not st then st = {}; nameFSText[nameFS] = st end
-    st.name, st.guild = want, guildKey
+    st.name, st.guild, st.own = want, guildKey, ownLine
 
     _titledNameGuard = true
-    if guild then
+    if guild and ownLine then
+        local r, g, b = GetSubTextColor(unit)
+        local fp = FP()
+        nameFS:SetMaxLines(1)
+        nameFS:SetText(want)
+        ShowGuildLine(nameFS, (not fp or fp.friendlyBelowNameGuildBrackets ~= false) and "<%s>" or "%s", guild, r, g, b)
+    elseif guild then
+        HideGuildLine(nameFS)
         -- Second line via an explicit newline. The guild is only ever a
         -- SetFormattedText argument (display sinks accept secrets); the
         -- colour escape and brackets are literals built from our own values.
@@ -893,6 +950,7 @@ local function UpdateNameOnlyText(nameFS)
             math.floor(r * 255 + 0.5), math.floor(g * 255 + 0.5), math.floor(b * 255 + 0.5))
             .. body .. "|r", want, guild)
     else
+        HideGuildLine(nameFS)
         nameFS:SetMaxLines(1)
         nameFS:SetText(want)
     end
@@ -1892,6 +1950,7 @@ end
 function ns.RefreshFriendlyBelowName()
     -- Size / font / slug: the subtitle family on every built sub text.
     ApplySubtitleFont()
+    ApplyGuildLineFont()
     ns.NP_FriendlyLevelWatch()
     -- Full-plate mode: repaint the name (the title is part of it now) plus
     -- the guild line and name lift on live plates.
@@ -2023,6 +2082,7 @@ function ns.UpdateFriendlyNameplateSystem()
     -- Re-derive the subtitle font (login profile load, profile switches,
     -- slug toggles). Value-memoized, near-free when unchanged.
     ApplySubtitleFont()
+    ApplyGuildLineFont()
     ns.NP_FriendlyLevelWatch()
 
     -- In follower dungeons, force-hide friendly nameplates via CVars. In instances

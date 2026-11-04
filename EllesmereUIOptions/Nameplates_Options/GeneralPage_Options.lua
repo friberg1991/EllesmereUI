@@ -355,6 +355,26 @@ local function BuildGeneralPage(pageName, parent, yOffset)
                     DB().friendlyBelowNameGuildBrackets = v and true or false
                     if ns.RefreshFriendlyBelowName then ns.RefreshFriendlyBelowName() end
                   end },
+                -- Name Only mode keeps its own guild size (unset: the guild rides the
+                -- name string at the name's size); full plates use friendlyBelowNameSize.
+                { type = "slider", label = "Guild Text Size", min = 8, max = 30, step = 1,
+                  disabled = subtitleGuildOff,
+                  disabledTooltip = "This option requires Subtitle Text to include the Guild Name",
+                  rawTooltip = true,
+                  get = function()
+                      if friendlyPlateOff() then
+                          return DBVal("friendlyGuildNameOnlySize") or DBVal("friendlyNameSize") or defaults.friendlyNameSize
+                      end
+                      return DBVal("friendlyBelowNameSize") or defaults.friendlyBelowNameSize
+                  end,
+                  set = function(v)
+                    if friendlyPlateOff() then
+                        DB().friendlyGuildNameOnlySize = v
+                    else
+                        DB().friendlyBelowNameSize = v
+                    end
+                    if ns.RefreshFriendlyBelowName then ns.RefreshFriendlyBelowName() end
+                  end },
             },
         })
     end
