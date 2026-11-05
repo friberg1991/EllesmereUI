@@ -367,6 +367,27 @@ local function BuildDisplayBars(parent, y, ctx)
         PP.Point(ctSwatch, "RIGHT", leftRgn._lastInline or leftRgn._control, "LEFT", -8, 0)
         leftRgn._lastInline = ctSwatch
         EllesmereUI.RegisterWidgetRefresh(function() ctUpdateSwatch() end)
+
+        -- Inline cog on Cast Bar Y Offset (right region) for X Offset
+        local rightRgn = castTimerRow._rightRegion
+        EllesmereUI.BuildInlineCog(rightRgn, {
+            anchorTo = rightRgn._control,
+            title = "Cast Bar Position",
+            rows = {
+                { type="slider", label="X Offset", min=-50, max=50, step=1,
+                  get=function() return DBVal("castBarOffsetX") or defaults.castBarOffsetX end,
+                  set=function(v)
+                    DB().castBarOffsetX = v
+                    local barW = ns.GetHealthBarWidth()
+                    local castH = ns.GetCastBarHeight()
+                    for _, plate in pairs(plates) do
+                        ns.LayoutCastBar(plate, barW, castH)
+                        ns.LayoutCastIcon(plate, castH)
+                    end
+                    UpdatePreview()
+                  end },
+            },
+        })
     end
 
     _, h = W:Spacer(parent, y, 20);  y = y - h
