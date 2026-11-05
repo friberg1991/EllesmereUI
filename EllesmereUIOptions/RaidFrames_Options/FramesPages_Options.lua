@@ -783,12 +783,12 @@ local function BuildMainPage(pageName, parent, yOffset)
     -- value comes back when it is off.
     local spacingRow
     spacingRow, h = W:DualRow(parent, y,
-        { type="slider", pixel=true, text="Frame Spacing", min=-5, max=15, step=1,
+        { type="slider", pixel=true, text="Frame Spacing", min=-5, max=49, step=1,
           disabled=function() return ns.RF_CompactOn(db.profile, false) end,
           disabledTooltip="Compact Mode", requireState="disabled",
           getValue=function() return SVal("cellSpacing", 2) end,
           setValue=function(v) SSet("cellSpacing", v) end },
-        { type="slider", pixel=true, text="Group Spacing", min=-5, max=15, step=1,
+        { type="slider", pixel=true, text="Group Spacing", min=-5, max=49, step=1,
           disabled=function() return ns.RF_GridOn(db.profile) end,
           disabledTooltip="Grid Mode", requireState="disabled",
           getValue=function() return SVal("groupSpacing", 8) end,
@@ -1785,7 +1785,7 @@ local function BuildPartyPage(pageName, parent, yOffset)
         -- (The Party Frames kit keeps its own spacing, set in its Frame
         -- Scale cog, so the Raid Frames layout's value survives a switch
         -- between the two.)
-        ns.RF_PartyKitGate({ type="slider", pixel=true, text="Frame Spacing", min=-5, max=15, step=1,
+        ns.RF_PartyKitGate({ type="slider", pixel=true, text="Frame Spacing", min=-5, max=49, step=1,
           -- Compact Mode (this slot's cog) uses one pixel instead.
           disabled=function() return ns.RF_CompactOn(db.profile, true) end,
           disabledTooltip="Compact Mode", requireState="disabled",
