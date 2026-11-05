@@ -391,11 +391,15 @@ local function PT_Side(s, auto)
 end
 
 -- The gap to the frame: the party frames' spacing (under the kit its frame gap, without the buff
--- lines RF_PartyDims adds above stacked frames).
+-- lines RF_PartyDims adds above stacked frames), at most its stock slider maximum.
+local PT_GAP_MAX, PT_KIT_GAP_MAX = 15, 30
 local function PT_Gap(s)
-    if ns.RF_PartyKit() then return s.partyKitSpacing or ns.RF_KIT_SPACING end
+    if ns.RF_PartyKit() then
+        local sp = s.partyKitSpacing or ns.RF_KIT_SPACING
+        return sp > PT_KIT_GAP_MAX and PT_KIT_GAP_MAX or sp
+    end
     local _, _, sp = ns.RF_PartyDims(s)
-    return sp
+    return sp > PT_GAP_MAX and PT_GAP_MAX or sp
 end
 
 -- The reach of target frames laid out as st (the live layout state PT, or a preview spec) past the
