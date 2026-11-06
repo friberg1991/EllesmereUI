@@ -90,6 +90,10 @@ local function BuildGeneralPage(pageName, parent, yOffset)
                     end
                 end
             end
+            -- Friendly pet plates go with the friendly player plates.
+            if DBVal("showFriendlyPets") ~= nil and ns.SetFriendlyPetCVars then
+                ns.SetFriendlyPetCVars(v and DBVal("showFriendlyPets"))
+            end
             if ns.UpdateFriendlyNameplateSystem then ns.UpdateFriendlyNameplateSystem() end
             -- Re-assert stacking after friendly CVar changes (Blizzard can reset the stacking bitfield as a side effect).
             ns.RefreshStackingMotion()
@@ -115,31 +119,51 @@ local function BuildGeneralPage(pageName, parent, yOffset)
     --  Friendly Player cog popup (size, health text, class colours, target border)
     ---------------------------------------------------------------
     if not EllesmereUI._prebuilding then
+        -- The pet row works in both modes; the health bar rows only without Name Only.
+        local barTip = "Requires Name Only setting to be disabled"
         EllesmereUI.BuildInlineCog(friendlyRow._leftRegion, {
             chain = false,
-            disabled = friendlyPlateOff,
-            disabledTooltip = "Requires Name Only setting to be disabled", rawTooltip = true,
+            disabled = friendlyPlayersOff,
+            disabledTooltip = "Show EUI Friendly Player Nameplates",
             title = "Friendly Nameplate Settings",
             rows = {
+                { type = "toggle", label = "Show Friendly Pet Nameplates",
+                  tooltip = "Toggle visibility of other players' pet, guardian and totem nameplates. They take the friendly player look: a name sized like friendly player names in Name Only mode, the friendly health bar otherwise.\n\nIn dungeons, raids and other instances the game locks these plates, so they are hidden there in Name Only mode.",
+                  get = function()
+                    local v = DBVal("showFriendlyPets")
+                    if v == nil then return GetCVarBool("nameplateShowFriendlyPlayerPets") end
+                    return v
+                  end,
+                  set = function(v)
+                    DB().showFriendlyPets = v and true or false
+                    if ns.SetFriendlyPetCVars then ns.SetFriendlyPetCVars(v) end
+                    if ns.UpdateFriendlyNameplateSystem then ns.UpdateFriendlyNameplateSystem() end
+                  end },
                 { type = "slider", label = "Distance", min = -50, max = 50, step = 1,
+                  disabled = friendlyPlateOff, disabledTooltip = barTip, rawTooltip = true,
                   get = function() return DBVal("friendlyPlateYOffset") or 0 end,
                   set = function(v) DB().friendlyPlateYOffset = v; if ns.RefreshFriendlyPlateYOffset then ns.RefreshFriendlyPlateYOffset() end end },
                 { type = "slider", label = "Height", min = 6, max = 40, step = 1,
+                  disabled = friendlyPlateOff, disabledTooltip = barTip, rawTooltip = true,
                   get = function() return DBVal("friendlyHealthBarHeight") or defaults.friendlyHealthBarHeight end,
                   set = function(v) DB().friendlyHealthBarHeight = v; if ns.RefreshFriendlyPlateSize then ns.RefreshFriendlyPlateSize() end end },
                 { type = "slider", label = "Width", min = 80, max = 250, step = 1,
+                  disabled = friendlyPlateOff, disabledTooltip = barTip, rawTooltip = true,
                   get = function() return DBVal("friendlyHealthBarWidth") or defaults.friendlyHealthBarWidth end,
                   set = function(v) DB().friendlyHealthBarWidth = v; if ns.RefreshFriendlyPlateSize then ns.RefreshFriendlyPlateSize() end end },
                 { type = "slider", label = "Name Size", min = 6, max = 30, step = 1,
+                  disabled = friendlyPlateOff, disabledTooltip = barTip, rawTooltip = true,
                   get = function() return DBVal("friendlyNameTextSize") or defaults.friendlyNameTextSize end,
                   set = function(v) DB().friendlyNameTextSize = v; if ns.RefreshFriendlyNameTextSize then ns.RefreshFriendlyNameTextSize() end end },
                 { type = "toggle", label = "Show Health Percent",
+                  disabled = friendlyPlateOff, disabledTooltip = barTip, rawTooltip = true,
                   get = function() local db = DB(); return not (db and db.friendlyHideHealthText) end,
                   set = function(v)
                     DB().friendlyHideHealthText = not v
                     if ns.RefreshFriendlyHealthText then ns.RefreshFriendlyHealthText() end
                   end },
                 { type = "toggle", label = "Class Colored Health Bar",
+                  disabled = friendlyPlateOff, disabledTooltip = barTip, rawTooltip = true,
                   get = function() return DBVal("classColorFriendly") ~= false end,
                   set = function(v)
                     DB().classColorFriendly = v and true or false
@@ -150,6 +174,7 @@ local function BuildGeneralPage(pageName, parent, yOffset)
                     ns.RefreshAllSettings()
                   end },
                 { type = "toggle", label = "Class Colored Names",
+                  disabled = friendlyPlateOff, disabledTooltip = barTip, rawTooltip = true,
                   get = function() return DBVal("friendlyNameClassColor") == true end,
                   set = function(v)
                     DB().friendlyNameClassColor = v and true or false
@@ -162,16 +187,17 @@ local function BuildGeneralPage(pageName, parent, yOffset)
                   tooltip = "Also applies the target Border Color and Border Size effects to friendly nameplates.",
                   -- Borders stand down under the stock styles.
                   disabled = function()
-                    return EllesmereUI.BlizzStyle.Get("nameplates")
+                    return friendlyPlateOff() or EllesmereUI.BlizzStyle.Get("nameplates")
                         or not (ns.GetTargetGlowBorderColor() or ns.GetTargetGlowBorderSize())
                   end,
                   disabledTooltip = function()
+                    if friendlyPlateOff() then return barTip end
                     if EllesmereUI.BlizzStyle.Get("nameplates") then
                         return EllesmereUI.BlizzStyle.Label("nameplates")
                     end
                     return "This option requires the Border Color or Border Size target effect."
                   end,
-                  rawTooltip = function() return not EllesmereUI.BlizzStyle.Get("nameplates") end,
+                  rawTooltip = function() return friendlyPlateOff() or not EllesmereUI.BlizzStyle.Get("nameplates") end,
                   requireState = "disabled",
                   get = function() return DBVal("friendlyTargetBorderFx") == true end,
                   set = function(v)
