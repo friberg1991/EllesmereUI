@@ -88,6 +88,34 @@ local function IsFriendlyNPCShownForUnit(unit)
     return true
 end
 
+-- Show Friendly Pet Nameplates (showFriendlyPets): another player's pet,
+-- guardian or totem takes the friendly NPC name overlay in name-only mode and
+-- the friendly plate in health-bar mode, with or without Show Friendly NPC
+-- Nameplates.
+local function IsShownFriendlyPet(unit)
+    local fp = FP()
+    if not (fp and fp.showFriendlyPets == true) then return false end
+    local controlled = UnitPlayerControlled(unit)
+    if issecretvalue(controlled) then return false end
+    return controlled and true or false
+end
+
+-- The game's three friendly player pet CVars, which the one toggle drives.
+local FRIENDLY_PET_CVARS = {
+    "nameplateShowFriendlyPlayerPets",
+    "nameplateShowFriendlyPlayerGuardians",
+    "nameplateShowFriendlyPlayerTotems",
+}
+
+-- Writes the toggle to all three; a no-op while an instance holds them
+-- (HoldFriendlyPetPlates hands back the toggle's value on release).
+function ns.SetFriendlyPetCVars(on)
+    if EllesmereUIDB and EllesmereUIDB.friendlyPetsVisSaved then return end
+    for _, cvar in ipairs(FRIENDLY_PET_CVARS) do
+        pcall(EllesmereUI.SetCVar, cvar, on and 1 or 0, "EllesmereUINameplates")
+    end
+end
+
 local function ShowNPCTitles()
     local fp = FP()
     return fp and (fp.showNPCTitles ~= false)
@@ -492,7 +520,14 @@ end
 -- write here goes through SetFontFamily too.
 local function ApplyOverlayStyle(overlay, unit)
     local font, outline, shadow = GetFont(), GetNPOutline(), GetNPUseShadow()
-    EllesmereUI.SetFontFamily(overlay.name, font, GetNPCOverlayNameSize(), outline, shadow)
+    -- A name-only pet is sized like a friendly player: name and owner line at
+    -- Friendly Name Size.
+    local nameSize, titleSize = GetNPCOverlayNameSize(), GetNPCTitleSize()
+    if IsShownFriendlyPet(unit) then
+        nameSize = GetFriendlyNameSize()
+        titleSize = nameSize
+    end
+    EllesmereUI.SetFontFamily(overlay.name, font, nameSize, outline, shadow)
     overlay.name:SetTextColor(GetNPCNameColor(unit))
     if overlay.name.SetSnapToPixelGrid then
         overlay.name:SetSnapToPixelGrid(false)
@@ -500,7 +535,7 @@ local function ApplyOverlayStyle(overlay, unit)
     if overlay.name.SetTexelSnappingBias then
         overlay.name:SetTexelSnappingBias(0)
     end
-    EllesmereUI.SetFontFamily(overlay.title, font, GetNPCTitleSize(), outline, shadow)
+    EllesmereUI.SetFontFamily(overlay.title, font, titleSize, outline, shadow)
     overlay.title:SetTextColor(GetNPCTitleColor(unit))
 end
 
@@ -529,8 +564,9 @@ local function ShowNPCOverlay(nameplate, unit)
     overlay.name:SetNonSpaceWrap(false)
     overlay.name:SetMaxLines(1)
     ApplyOverlayStyle(overlay, unit)
-    -- NPC title (e.g. "Innkeeper", "Flight Master")
-    if ShowNPCTitles() then
+    -- NPC title (e.g. "Innkeeper", "Flight Master"); a name-only pet always
+    -- shows its owner line, as a player shows a guild.
+    if IsShownFriendlyPet(unit) or ShowNPCTitles() then
         local titleText = GetNPCTitle(unit)
         if titleText then
             overlay.title:SetText("<" .. titleText .. ">")
@@ -1111,7 +1147,7 @@ local function SuppressNPCNameplate(nameplate, unit)
     -- ...but only draw our name overlay for NPCs Blizzard would actually name
     -- (respects the "NPC Names" filter via IsFriendlyNPCShownForUnit). Filtered
     -- flavor NPCs stay suppressed with no overlay = fully hidden, matching Blizz.
-    if IsFriendlyNPCShownForUnit(unit) then
+    if IsFriendlyNPCShownForUnit(unit) or IsShownFriendlyPet(unit) then
         ShowNPCOverlay(nameplate, unit)
     end
 end
@@ -1124,6 +1160,25 @@ local function RestoreNPCNameplate(nameplate, unit)
     -- Restore Blizzard UF
     if unit then
         RestoreBlizzardUF(unit)
+    end
+end
+
+-- Name-only NPC sweep. C_NamePlate.GetNamePlates can omit friendly plates
+-- (players, their pets, and the NPCs on screen at a mode switch), so this
+-- walks ns.pendingUnits (the live friendly unit -> nameplate registry).
+local function SweepNameOnlyNPCs()
+    local pending = ns.pendingUnits
+    if not pending then return end
+    for unit, nameplate in pairs(pending) do
+        if not UnitIsPlayer(unit) and not UnitCanAttack("player", unit) and not UnitIsUnit(unit, "player") then
+            if IsFriendlyNPCEnabled() or IsShownFriendlyPet(unit) then
+                -- Marked suppressed but the Blizzard UF was handed back since.
+                if not modifiedUFs[unit] then nameOnlyNPCSuppressed[nameplate] = nil end
+                SuppressNPCNameplate(nameplate, unit)
+            else
+                RestoreNPCNameplate(nameplate, unit)
+            end
+        end
     end
 end
 
@@ -1166,7 +1221,7 @@ hooksecurefunc(NamePlateDriverFrame, "OnNamePlateAdded", function(_, unit)
         -- Suppress Blizzard's default plate for players and ALL enabled friendly
         -- NPCs. The custom plate itself is gated per-NPC in TryAddFriendlyPlate, so
         -- filtered NPCs end up suppressed with no plate = hidden.
-        if not UnitIsPlayer(unit) and not IsFriendlyNPCEnabled() then return end
+        if not UnitIsPlayer(unit) and not IsFriendlyNPCEnabled() and not IsShownFriendlyPet(unit) then return end
         local nameplate = C_NamePlate.GetNamePlateForUnit(unit)
         if nameplate then
             SuppressBlizzardUF(unit, nameplate)
@@ -1175,7 +1230,7 @@ hooksecurefunc(NamePlateDriverFrame, "OnNamePlateAdded", function(_, unit)
     end
 
     -- Name-only mode: suppress Blizzard UF and show our own name overlay for NPCs
-    if IsNameOnlyMode() and not UnitIsPlayer(unit) and IsFriendlyNPCEnabled() then
+    if IsNameOnlyMode() and not UnitIsPlayer(unit) and (IsFriendlyNPCEnabled() or IsShownFriendlyPet(unit)) then
         local nameplate = C_NamePlate.GetNamePlateForUnit(unit)
         if nameplate then
             SuppressNPCNameplate(nameplate, unit)
@@ -1730,7 +1785,7 @@ local function TryAddFriendlyPlate(unit)
     if UnitIsUnit(unit, "player") then return end
     -- Skip non-player units unless friendly NPC plates are enabled (and the unit
     -- isn't filtered out by Blizzard's "NPC Names" setting).
-    if not UnitIsPlayer(unit) and not IsFriendlyNPCShownForUnit(unit) then return end
+    if not UnitIsPlayer(unit) and not IsFriendlyNPCShownForUnit(unit) and not IsShownFriendlyPet(unit) then return end
     local nameplate = C_NamePlate.GetNamePlateForUnit(unit)
     if not nameplate then return end
     if friendlyPlates[unit] then return end
@@ -1960,6 +2015,9 @@ function ns.RefreshFriendlyBelowName()
     -- Name-only mode: recompose the name text on visible player plates
     -- (self-gated; a no-op outside name-only mode).
     SweepPlayerSubText()
+    -- Name-only pets take the friendly name size.
+    local fp = FP()
+    if fp and fp.showFriendlyPets == true then ns.RefreshNPCOverlayStyle() end
     -- The names now show these settings (the Name Format sync's record).
     StampFriendlyNames()
 end
@@ -2075,6 +2133,35 @@ end
 -------------------------------------------------------------------------------
 --  System enable / disable  (called from toggle setValue and on login)
 -------------------------------------------------------------------------------
+--- Name-only pets in instances: the plates there are protected, so the pets'
+--- plates are hidden and handed back outside (the toggle's value when set).
+--- The value from before is kept in EllesmereUIDB, as friendlyPlateVisSaved is.
+local function HoldFriendlyPetPlates(hold)
+    if not EllesmereUIDB then return end
+    local saved = EllesmereUIDB.friendlyPetsVisSaved
+    if hold then
+        if saved ~= nil then return end
+        saved = {}
+        for _, cvar in ipairs(FRIENDLY_PET_CVARS) do
+            saved[cvar] = GetCVarBool(cvar) and 1 or 0
+        end
+        EllesmereUIDB.friendlyPetsVisSaved = saved
+        for _, cvar in ipairs(FRIENDLY_PET_CVARS) do
+            pcall(EllesmereUI.HoldCVar, cvar, 0, "EllesmereUINameplates")
+        end
+    elseif saved ~= nil then
+        local fp = FP()
+        EllesmereUIDB.friendlyPetsVisSaved = nil
+        for _, cvar in ipairs(FRIENDLY_PET_CVARS) do
+            local v = type(saved) == "table" and saved[cvar] or saved
+            if fp and fp.showFriendlyPets ~= nil then
+                v = (fp.showFriendlyPets and fp.showFriendlyPlayers ~= false) and 1 or 0
+            end
+            pcall(EllesmereUI.ReleaseCVar, cvar, v, "EllesmereUINameplates")
+        end
+    end
+end
+
 function ns.UpdateFriendlyNameplateSystem()
     local shouldEnable = IsFriendlyEnabled()       -- health-bar mode
     local nameOnly     = IsNameOnlyMode()           -- name-only mode
@@ -2097,6 +2184,7 @@ function ns.UpdateFriendlyNameplateSystem()
     if not InCombatLockdown() then
         local fp = FP()
         local euiManagesPlayers = fp and (fp.showFriendlyPlayers ~= false)
+        local holdPets = euiManagesPlayers and fp.showFriendlyPets == true and fp.friendlyNameOnly ~= false
         local _, iType = GetInstanceInfo()
         local inInstance = (iType == "party" or iType == "raid" or iType == "scenario" or iType == "arena" or iType == "pvp")
         if IsInFollowerDungeon() then
@@ -2109,6 +2197,7 @@ function ns.UpdateFriendlyNameplateSystem()
             end
             pcall(EllesmereUI.SetCVar, "nameplateShowFriendlyNPCs", 0, "EllesmereUINameplates")
             pcall(EllesmereUI.SetCVar, "nameplateShowFriendlyNpcs", 0, "EllesmereUINameplates")
+            HoldFriendlyPetPlates(holdPets)
         elseif inInstance then
             -- NPC plates only: force off in instances since our frame
             -- suppression doesn't work on protected nameplate frames.
@@ -2127,7 +2216,9 @@ function ns.UpdateFriendlyNameplateSystem()
             end
             pcall(EllesmereUI.SetCVar, "nameplateShowFriendlyNPCs", 0, "EllesmereUINameplates")
             pcall(EllesmereUI.SetCVar, "nameplateShowFriendlyNpcs", 0, "EllesmereUINameplates")
+            HoldFriendlyPetPlates(holdPets)
         else
+            HoldFriendlyPetPlates(false)
             -- Restore user's preferred friendly CVar state
             if fp then
                 local showNPCs = (fp.showFriendlyNPCs == true)
@@ -2189,6 +2280,12 @@ function ns.UpdateFriendlyNameplateSystem()
                 if unit then TryAddFriendlyPlate(unit) end
             end
         end
+        -- GetNamePlates can omit friendly plates (other players' pets among them).
+        if ns.pendingUnits then
+            for unit in pairs(ns.pendingUnits) do
+                TryAddFriendlyPlate(unit)
+            end
+        end
     elseif not shouldEnable and friendlyEnabled then
         -- Switching FROM health-bar mode
         friendlyEnabled = false
@@ -2223,7 +2320,7 @@ function ns.UpdateFriendlyNameplateSystem()
                 for _, nameplate in ipairs(allPlates) do
                     local u = nameplate.namePlateUnitToken
                     if u and not UnitCanAttack("player", u) and not UnitIsUnit(u, "player") and not UnitIsPlayer(u) then
-                        if IsFriendlyNPCEnabled() then
+                        if IsFriendlyNPCEnabled() or IsShownFriendlyPet(u) then
                             SuppressNPCNameplate(nameplate, u)
                         else
                             RestoreNPCNameplate(nameplate, u)
@@ -2231,6 +2328,7 @@ function ns.UpdateFriendlyNameplateSystem()
                     end
                 end
             end
+            SweepNameOnlyNPCs()
             SweepPlayerSubText()
         end
         SweepNameOnlyPlates()
