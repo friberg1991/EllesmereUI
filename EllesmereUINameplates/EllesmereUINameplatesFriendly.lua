@@ -199,6 +199,12 @@ local function GetFriendlyNameSize()
     return (fp and fp.friendlyNameSize) or 15
 end
 
+-- A full plate name's font flags: outlined unless the nameplate font's outline is
+-- none or shadow, as name-only names (ApplyFriendlyFontOverride).
+local function FriendlyNameFlags()
+    return (GetNPOutline() ~= "") and "OUTLINE, SLUG" or "SLUG"
+end
+
 -------------------------------------------------------------------------------
 --  Subtitle Text (player title / guild name)
 --  One shared setting drives both friendly modes. The TITLE is inline with
@@ -243,11 +249,13 @@ local function ApplySubtitleFont()
     end
 end
 
-local _ffFile, _ffSize
+local _ffFile, _ffSize, _ffOutline
 local function ApplyFriendlyFontOverride(force)
     SaveOriginalFonts()
     local font = GetFont()
     local size = GetFriendlyNameSize()
+    -- The nameplate font's outline setting: none or shadow drops the outline.
+    local outline = GetNPOutline() ~= ""
     -- Blizzard never rewrites the shared font OBJECTS (its plate setup only
     -- SetFontObjects the name strings onto them), so once they carry our
     -- file + size they keep it: an unchanged pair means nothing to restore
@@ -257,7 +265,7 @@ local function ApplyFriendlyFontOverride(force)
     -- (instanced content) the per-string SetTextHeight re-stamp is denied,
     -- and this relayout is the only lever that clears Blizzard's per-instance
     -- height, so the deferred re-apply forces it there (once per burst).
-    if not force and fontOverrideApplied and font == _ffFile and size == _ffSize then return end
+    if not force and fontOverrideApplied and font == _ffFile and size == _ffSize and outline == _ffOutline then return end
     -- Restore to known-good originals first, so a member the new font does not
     -- take (a script it lacks) is back on Blizzard's own face.
     if fontOverrideApplied then
@@ -271,12 +279,14 @@ local function ApplyFriendlyFontOverride(force)
     -- Classic-style users got name-only player names with no outline at all.
     -- Friendly names are always outlined (the full plates force it), so the
     -- one thing added here is OUTLINE where the object's own flags lack one.
+    -- An outline set to none drops every OUTLINE instead.
     -- Everything else the object carries (SLUG, an outline already present)
     -- stays exactly as read, so already-outlined names render unchanged.
     -- The flags are the saved originals' (every member of these objects has
     -- the same), which is what the objects carry after the restore above.
     local function WithOutline(flags)
         flags = flags or ""
+        if not outline then return (flags:gsub("%a*OUTLINE,?%s*", ""):gsub("[,%s]+$", "")) end
         if flags:find("OUTLINE", 1, true) then return flags end
         if flags == "" then return "OUTLINE" end
         return flags .. ", OUTLINE"
@@ -285,7 +295,7 @@ local function ApplyFriendlyFontOverride(force)
     -- scripts it draws); the other members keep Blizzard's faces at our size.
     EllesmereUI.SetFontObjectFace(SystemFont_NamePlate, font, size, WithOutline(SnapFlags(origNamePlateFont)), nil)
     EllesmereUI.SetFontObjectFace(SystemFont_NamePlate_Outlined, font, size, WithOutline(SnapFlags(origNamePlateOutlined)), nil)
-    _ffFile, _ffSize = font, size
+    _ffFile, _ffSize, _ffOutline = font, size, outline
     fontOverrideApplied = true
 end
 
@@ -673,6 +683,25 @@ local function ClassRGB(unit, plainOnly)
     return true, c.r, c.g, c.b
 end
 
+-- Relationship Colors (friendlyNameRelationColor, default off): while names are
+-- class coloured, a player in your group or on your friends list keeps the
+-- colour picked for that relationship on the Colors row (UnitSelectionType 6 group,
+-- 7 group in War Mode, 8 friend, 16 recent ally); unset, the game's own colour.
+-- Returns r, g, b or nil.
+local RELATION_KEYS = {
+    [6] = "friendlyNameGroupColor", [7] = "friendlyNameGroupPvPColor",
+    [8] = "friendlyNameFriendColor", [16] = "friendlyNameAllyColor",
+}
+local function RelationRGB(unit)
+    local fp = FP()
+    if not (unit and fp and fp.friendlyNameRelationColor) then return end
+    local t = UnitSelectionType(unit, true)
+    if issecretvalue(t) or not RELATION_KEYS[t] then return end
+    local c = fp[RELATION_KEYS[t]]
+    if c then return c.r, c.g, c.b end
+    return UnitSelectionColor(unit, true)
+end
+
 -- Whether a unit is in your party or raid. The raid index reads secret where the
 -- unit's identity is withheld, so only its type is asked.
 local function InMyGroup(unit)
@@ -707,7 +736,12 @@ local function PaintFriendlyColors(plate, unit, fp)
                 plate.health:SetStatusBarColor(bc.r, bc.g, bc.b)
             end
             if nameClass and ok then
-                plate.name:SetTextColor(r, g, b)
+                local rr, rg, rb = RelationRGB(unit)
+                if rr then
+                    plate.name:SetTextColor(rr, rg, rb)
+                else
+                    plate.name:SetTextColor(r, g, b)
+                end
             else
                 local nc = (fp and fp.friendlyNameColor) or ns.defaults.friendlyNameColor
                 plate.name:SetTextColor(nc.r, nc.g, nc.b)
@@ -747,6 +781,37 @@ local function ModeHasGuild(mode) return mode == "guild" or mode == "both" end
 local function ShowFriendlyLevel()
     local fp = FP()
     return fp and fp.friendlyShowLevel == true
+end
+
+-- Away and Realm Tags (friendlyNameStatusTags, both friendly modes): the game's own
+-- "<Away>" / "<Busy>" before a name and " (*)" after one from another realm.
+local function ShowNameTags()
+    local fp = FP()
+    return fp and fp.friendlyNameStatusTags == true
+end
+
+-- No realm tags on WoW Forever: its realms are one mega-server.
+local function TagFriendlyName(unit, name)
+    local _, server = UnitName(unit)
+    if not EllesmereUI.IS_FOREVER and server and not issecretvalue(server) and server ~= ""
+        and UnitRealmRelationship(unit) ~= LE_REALM_RELATION_VIRTUAL then
+        name = name .. FOREIGN_SERVER_LABEL
+    end
+    local afk, dnd = UnitIsAFK(unit), UnitIsDND(unit)
+    if not issecretvalue(afk) and afk then return "<" .. FRIENDS_LIST_AWAY .. ">" .. name end
+    if not issecretvalue(dnd) and dnd then return "<" .. FRIENDS_LIST_BUSY .. ">" .. name end
+    return name
+end
+
+-- The guild line's format: "<%s>" (Show <> Around Guild), plus " (*)" for a guild
+-- from another realm while the tags are on.
+local function GuildFormat(unit)
+    local fp = FP()
+    local body = (not fp or fp.friendlyBelowNameGuildBrackets ~= false) and "<%s>" or "%s"
+    if not ShowNameTags() or EllesmereUI.IS_FOREVER then return body end
+    local _, _, _, guildRealm = GetGuildInfo(unit)
+    if guildRealm and not issecretvalue(guildRealm) then return body .. FOREIGN_SERVER_LABEL end
+    return body
 end
 -- Color Level by Difficulty (friendlyLevelDiffColor, default off): the level
 -- in its difficulty colour against yours, as Blizzard's level box draws it.
@@ -904,7 +969,7 @@ do
         titledCount[mode] = titledCount[mode] + 1
         return s
     end
-    local aFormat, aMode, aBrackets, aLevel, aDiff, aGroupBrackets, aNameEsc, stamped
+    local aFormat, aMode, aBrackets, aLevel, aDiff, aGroupBrackets, aNameEsc, aOwn, stamped
     StampFriendlyNames = function()
         local fp = FP()
         if not fp then return end
@@ -913,6 +978,7 @@ do
         aLevel, aDiff = fp.friendlyShowLevel == true, fp.friendlyLevelDiffColor == true
         aGroupBrackets = fp.friendlyGroupBrackets == true
         aNameEsc = NameEsc.Get()
+        aOwn = fp.friendlyBelowNameSize
     end
     -- The Name Format options rows and every settings re-read (ns.RefreshAllSettings:
     -- profile switches, Spec Overrides). Before the first record it only records.
@@ -925,7 +991,8 @@ do
             and (fp.friendlyShowLevel == true) == aLevel
             and (fp.friendlyLevelDiffColor == true) == aDiff
             and (fp.friendlyGroupBrackets == true) == aGroupBrackets
-            and NameEsc.Get() == aNameEsc then
+            and NameEsc.Get() == aNameEsc
+            and fp.friendlyBelowNameSize == aOwn then
             return
         end
         ns.RefreshFriendlyBelowName()
@@ -945,9 +1012,9 @@ local function ApplySubText(fs, unit)
         fs:SetText("")
         return 0
     end
-    -- "<GuildName>" by default; the Subtitle Text cog can drop the brackets.
-    local fp = FP()
-    fs:SetFormattedText((not fp or fp.friendlyBelowNameGuildBrackets ~= false) and "<%s>" or "%s", guild)
+    -- "<GuildName>" by default; the Subtitle Text cog can drop the brackets, and
+    -- Away and Realm Tags add " (*)" for a guild from another realm.
+    fs:SetFormattedText(GuildFormat(unit), guild)
     local r, g, b = GetSubTextColor(unit)
     fs:SetTextColor(r, g, b)
     return 1
@@ -966,14 +1033,49 @@ end
 --
 --  Cost of the approach: one FontString means ONE font size, so the guild
 --  line renders at the name's size here (its colour still applies, via an
---  inline colour escape). The Guild Text Size setting governs full-plate
---  mode, which draws its own separate FontString.
+--  inline colour escape). A Guild Text Size other than the name's moves the
+--  guild to a FontString of our own instead (guildLines below).
 --
 --  The unit token and last-written text for a Blizzard name FontString ride
 --  external weak-keyed tables -- never custom keys on the Blizzard widget.
 -------------------------------------------------------------------------------
 local nameFSUnits = setmetatable({}, { __mode = "k" })   -- nameFS -> unit token
 local nameFSText  = setmetatable({}, { __mode = "k" })   -- nameFS -> { name=, guild= }
+
+-- Name-only guild lines: one FontString per Blizzard name FontString, hung off
+-- the name's parent centre (where FixNameSizing pins the name), on the subtitle
+-- font family (subTexts). Used while Guild Text Size differs from Friendly Name
+-- Size; equal is stock (the guild rides the name string).
+local guildLines = setmetatable({}, { __mode = "k" })    -- nameFS -> FontString
+local function GuildOwnLineSize()
+    local size = GetSubTextSize()
+    if size ~= GetFriendlyNameSize() then return size end
+end
+local function HideGuildLine(nameFS)
+    local fs = guildLines[nameFS]
+    if fs and fs:IsShown() then fs:SetText(""); fs:Hide() end
+end
+local function ShowGuildLine(nameFS, unit, guild)
+    local fs = guildLines[nameFS]
+    if not fs then
+        local parent = nameFS:GetParent()
+        if not parent or parent:IsForbidden() then return end
+        local host = CreateFrame("Frame", nil, parent)
+        host:SetAllPoints(parent)
+        fs = host:CreateFontString(nil, "OVERLAY")
+        fs:SetWordWrap(false)
+        fs:SetMaxLines(1)
+        guildLines[nameFS] = fs
+        ApplySubtitleFont()
+        subTexts[#subTexts + 1] = fs
+        EllesmereUI.SetFontFamily(fs, _sfFile, _sfSize, _sfFlags, false)
+    end
+    fs:ClearAllPoints()
+    fs:SetPoint("TOP", fs:GetParent(), "CENTER", 0, -(GetFriendlyNameSize() / 2 + 1))
+    fs:SetFormattedText(GuildFormat(unit), guild)
+    fs:SetTextColor(GetSubTextColor(unit))
+    fs:Show()
+end
 local hookedNameText = {}   -- nameFS -> true (permanent hooks, applied once)
 local _titledNameGuard = false
 
@@ -982,7 +1084,7 @@ local _titledNameGuard = false
 -- Subtitle Text setting off this resolves to the plain single-line name.
 local function UpdateNameOnlyText(nameFS)
     local unit = nameFSUnits[nameFS]
-    if not unit or not UnitExists(unit) then return end
+    if not unit or not UnitExists(unit) then HideGuildLine(nameFS); return end
     -- Blizzard pools the plates' unit frames, so this FontString can come back on another
     -- plate (a pet's, an NPC's) while the token it was attached for now names a different
     -- plate. Write only while that token's plate still holds this FontString; otherwise
@@ -990,12 +1092,13 @@ local function UpdateNameOnlyText(nameFS)
     local np = C_NamePlate.GetNamePlateForUnit(unit)
     if not (np and np.UnitFrame and np.UnitFrame.name == nameFS) then
         nameFSUnits[nameFS], nameFSText[nameFS] = nil, nil
+        HideGuildLine(nameFS)
         return
     end
     -- Nameplate tokens are recycled: a plate reused for an enemy keeps our
     -- hook and a stale friendly token, so never write on a hostile unit
     -- (Blizzard's own name write is already correct there).
-    if UnitCanAttack("player", unit) then return end
+    if UnitCanAttack("player", unit) then HideGuildLine(nameFS); return end
     local mode = GetBelowNameMode()
     local isPlayer = UnitIsPlayer(unit)
 
@@ -1029,6 +1132,7 @@ local function UpdateNameOnlyText(nameFS)
             want = FriendlyLevelText(unit) .. " | " .. want
         end
     end
+    if isPlayer and ShowNameTags() then want = TagFriendlyName(unit, want) end
 
     local guild
     if ModeHasGuild(mode) and isPlayer then
@@ -1041,19 +1145,19 @@ local function UpdateNameOnlyText(nameFS)
     -- touching a secret with ==.
     local guildKey = guild
     if guildKey ~= nil and issecretvalue and issecretvalue(guildKey) then guildKey = true end
+    local ownLine = GuildOwnLineSize()
     local st = nameFSText[nameFS]
-    if st and st.name == want and st.guild == guildKey then return end
+    if st and st.name == want and st.guild == guildKey and st.own == ownLine then return end
     if not st then st = {}; nameFSText[nameFS] = st end
-    st.name, st.guild, st.grp = want, guildKey, gKind
+    st.name, st.guild, st.grp, st.own = want, guildKey, gKind, ownLine
 
     _titledNameGuard = true
-    if guild then
+    if guild and not ownLine then
         -- Second line via an explicit newline. The guild is only ever a
         -- SetFormattedText argument (display sinks accept secrets); the
         -- colour escape and brackets are literals built from our own values.
         local r, g, b = GetSubTextColor(unit)
-        local fp = FP()
-        local body = (not fp or fp.friendlyBelowNameGuildBrackets ~= false) and "<%s>" or "%s"
+        local body = GuildFormat(unit)
         -- Word wrap MUST be on for the explicit newline to break a line --
         -- Blizzard leaves this FontString non-wrapping, which silently drops
         -- everything after the "\n". Nothing wraps by accident: the width is
@@ -1068,6 +1172,7 @@ local function UpdateNameOnlyText(nameFS)
         nameFS:SetText(want)
     end
     _titledNameGuard = false
+    if guild and ownLine then ShowGuildLine(nameFS, unit, guild) else HideGuildLine(nameFS) end
 end
 
 -- Register a plate's name FontString and (once) hook its SetText so our
@@ -1083,7 +1188,8 @@ local function AttachNameOnlyText(nameFS, unit)
         hooksecurefunc(nameFS, "SetText", function(self)
             if _titledNameGuard then return end
             if GetBelowNameMode() == "none" and not FriendlyNameFormat()
-                and not ShowFriendlyLevel() and not ShowFriendlyGroupBrackets() and not NameEsc.Get() then
+                and not ShowFriendlyLevel() and not ShowFriendlyGroupBrackets() and not NameEsc.Get()
+                and not ShowNameTags() then
                 return
             end
             -- Blizzard just overwrote the composed string with its own plain
@@ -1118,6 +1224,50 @@ local function SweepPlayerSubText()
     end
 end
 
+-- Going away or busy recomposes the names; registered only while the tags are on.
+local nameTagWatch
+local function WatchNameTags()
+    if ShowNameTags() then
+        if not nameTagWatch then
+            nameTagWatch = CreateFrame("Frame")
+            nameTagWatch:SetScript("OnEvent", function(_, _, unit)
+                local plate = unit and friendlyPlates[unit]
+                if plate then plate:UpdateName() end
+                SweepPlayerSubText()
+            end)
+        end
+        nameTagWatch:RegisterEvent("PLAYER_FLAGS_CHANGED")
+    elseif nameTagWatch then
+        nameTagWatch:UnregisterEvent("PLAYER_FLAGS_CHANGED")
+    end
+end
+
+-- Joining or leaving a group, or a friends list change, repaints the names;
+-- registered only while Relationship Colors is on. GROUP_ROSTER_UPDATE comes in
+-- bursts while a raid forms, so one repaint per burst.
+local relationWatch, relationPending
+local function RelationRepaint()
+    relationPending = false
+    ns.RefreshFriendlyColors()
+end
+local function WatchRelationColors()
+    local fp = FP()
+    if fp and fp.friendlyNameRelationColor then
+        if not relationWatch then
+            relationWatch = CreateFrame("Frame")
+            relationWatch:SetScript("OnEvent", function()
+                if relationPending then return end
+                relationPending = true
+                C_Timer.After(0.2, RelationRepaint)
+            end)
+        end
+        relationWatch:RegisterEvent("GROUP_ROSTER_UPDATE")
+        relationWatch:RegisterEvent("FRIENDLIST_UPDATE")
+    elseif relationWatch then
+        relationWatch:UnregisterAllEvents()
+    end
+end
+
 -- Re-collapse every visible friendly player name after Blizzard re-anchors
 -- them (UpdateNamePlateOptions / ApplyFrameOptions). Assigns the forward
 -- local declared with FixNameSizing. Each call is a GetNumPoints probe per
@@ -1133,6 +1283,163 @@ function ReanchorAllPlayerNames()
                 ApplyNameTextHeight(uf.name)
             end
         end
+    end
+end
+
+-- Blizzard clears the click area of a name-only plate (UpdateHitTestArea), so
+-- the name itself becomes the click area, unless Friendly Names Not Clickable.
+local NAME_HIT_PAD = 10
+local hookedHitTest = {}   -- UnitFrame -> true (hooks are permanent, applied once)
+
+local function ApplyNameOnlyHitTest(uf)
+    if uf:IsForbidden() or not uf:IsShowOnlyName() then return end
+    local fp = FP()
+    if fp and fp.friendlyClickThrough == true then return end
+    local nameplate = uf:GetNamePlateFrame()
+    if not (nameplate and nameplate:CanChangeHitTestPoints()) then return end
+    nameplate:SetHitTestPoints({
+        { point = "TOPLEFT", relativeTo = uf.name, relativePoint = "TOPLEFT", offsetX = -NAME_HIT_PAD, offsetY = 0 },
+        { point = "BOTTOMRIGHT", relativeTo = uf.name, relativePoint = "BOTTOMRIGHT", offsetX = NAME_HIT_PAD, offsetY = 0 },
+    })
+end
+
+local function AttachNameOnlyHitTest(uf)
+    if not hookedHitTest[uf] then
+        hookedHitTest[uf] = true
+        hooksecurefunc(uf, "UpdateHitTestArea", ApplyNameOnlyHitTest)
+    end
+    ApplyNameOnlyHitTest(uf)
+end
+
+-- The name-only player or pet under the mouse shows its name in the Hover Effect
+-- color while any hover effect is on (a name has no bar or border to show one).
+local hoverNameFS, hoverNamePlate, hoverIsVertex, hoverNameColor = nil, nil, false, {}
+
+-- Blizzard paints a player's name in vertex colour, our pet overlay in text colour.
+local function SetNameColor(fs, isVertex, r, g, b, a)
+    if isVertex then fs:SetVertexColor(r, g, b, a) else fs:SetTextColor(r, g, b, a) end
+end
+
+local function ClearNameOnlyHover()
+    if not hoverNameFS then return end
+    local fs, nameplate = hoverNameFS, hoverNamePlate
+    hoverNameFS, hoverNamePlate = nil, nil
+    -- A pet's overlay may have moved to another plate since.
+    local overlay = npcOverlays[nameplate]
+    local uf = nameplate.UnitFrame
+    if (overlay and overlay.name == fs) or (uf and uf.name == fs) then
+        SetNameColor(fs, hoverIsVertex, hoverNameColor[1], hoverNameColor[2], hoverNameColor[3], hoverNameColor[4])
+    end
+end
+
+function ns.UpdateNameOnlyHover()
+    ClearNameOnlyHover()
+    if not IsNameOnlyMode() then return end
+    if not (ns.GetHoverGlowHighlight() or ns.GetHoverGlowEllesmereUI()
+            or ns.GetHoverGlowBorderColor() or ns.GetHoverGlowBorderSize()) then
+        return
+    end
+    local pending = ns.pendingUnits
+    if not pending or not UnitExists("mouseover") then return end
+    for unit, nameplate in pairs(pending) do
+        local isMouseover = UnitIsUnit(unit, "mouseover")
+        if not issecretvalue(isMouseover) and isMouseover then
+            -- Blizzard's name for a player (vertex colour), our overlay for a pet.
+            local uf, overlay = nameplate.UnitFrame, npcOverlays[nameplate]
+            local isVertex = UnitIsPlayer(unit)
+            local controlled = not isVertex and UnitPlayerControlled(unit)
+            local fs = isVertex and uf and not uf:IsForbidden() and uf:IsShowOnlyName() and uf.name
+                or not isVertex and not issecretvalue(controlled) and controlled and overlay and overlay.name
+            if not fs then return end
+            local r, g, b, a
+            if isVertex then r, g, b, a = fs:GetVertexColor() else r, g, b, a = fs:GetTextColor() end
+            if issecretvalue(r) then return end
+            hoverNameColor[1], hoverNameColor[2], hoverNameColor[3], hoverNameColor[4] = r, g, b, a
+            hoverNameFS, hoverNamePlate, hoverIsVertex = fs, nameplate, isVertex
+            local gc = ns.GetHoverGlowColor()
+            SetNameColor(fs, isVertex, gc.r, gc.g, gc.b, a)
+            return
+        end
+    end
+end
+
+-- Name-only player names in the class colour take Relationship Colors for group
+-- members and friends: the hook repaints after each Blizzard write. Hooked only
+-- once Relationship Colors is on.
+local hookedNameColor = {}   -- nameFS -> true (hooks are permanent, applied once)
+local relationPainted = {}   -- nameFS -> true while it shows a relationship colour
+local _nameColorGuard = false
+
+local function ApplyNameOnlyColor(nameFS)
+    if _nameColorGuard or hoverNameFS == nameFS then return end
+    local uf = nameFS:GetParent()
+    if not (uf and uf.IsShowOnlyName) or uf:IsForbidden() or not uf:IsShowOnlyName() then
+        return
+    end
+    if not uf.colorNameWithClassColor then
+        relationPainted[nameFS] = nil
+        return
+    end
+    local r, g, b = RelationRGB(uf.unit)
+    if r then
+        relationPainted[nameFS] = true
+    else
+        -- Back to the class colour once, when the player leaves the group.
+        if not relationPainted[nameFS] then return end
+        relationPainted[nameFS] = nil
+        local ok
+        ok, r, g, b = ClassRGB(uf.unit)
+        if not ok then return end
+    end
+    _nameColorGuard = true
+    nameFS:SetVertexColor(r, g, b)
+    _nameColorGuard = false
+end
+
+local function AttachNameOnlyColor(nameFS)
+    local fp = FP()
+    -- Once hooked, keep applying: turning Relationship Colors off puts the class colour back.
+    if not hookedNameColor[nameFS] and not (fp and fp.friendlyNameRelationColor) then
+        return
+    end
+    if not hookedNameColor[nameFS] then
+        hookedNameColor[nameFS] = true
+        hooksecurefunc(nameFS, "SetVertexColor", ApplyNameOnlyColor)
+    end
+    ApplyNameOnlyColor(nameFS)
+end
+
+-- Name-only players carry the Faction element's badge as the full friendly plates
+-- do (ns.NP_FriendlyFactionRefresh, through one stand-in record per nameplate).
+local factionRecs = {}   -- nameplate -> { nameplate =, unit =, name = }
+
+local function UpdateNameOnlyFaction(unit, nameplate)
+    if not IsNameOnlyMode() then return end
+    local rec = factionRecs[nameplate]
+    if not rec then rec = { nameplate = nameplate }; factionRecs[nameplate] = rec end
+    local uf = nameplate.UnitFrame
+    rec.unit = unit
+    rec.name = UnitIsPlayer(unit) and uf and not uf:IsForbidden() and uf.name or nil
+    ns.NP_FriendlyFactionRefresh(rec)
+end
+
+-- A faction or PvP flag change (the main file's UNIT_FACTION dispatch).
+function ns.NP_NameOnlyFaction(unit)
+    local nameplate = ns.pendingUnits and ns.pendingUnits[unit]
+    if nameplate then UpdateNameOnlyFaction(unit, nameplate) end
+end
+
+-- Every friendly plate's name colour hook and faction badge, after a settings change.
+function ns.NP_SweepNameOnlyPlayers()
+    local pending = ns.pendingUnits
+    if not pending then return end
+    local nameOnly = IsNameOnlyMode()
+    for unit, nameplate in pairs(pending) do
+        local uf = nameplate.UnitFrame
+        if nameOnly and UnitIsPlayer(unit) and uf and uf.name and not uf:IsForbidden() then
+            AttachNameOnlyColor(uf.name)
+        end
+        UpdateNameOnlyFaction(unit, nameplate)
     end
 end
 
@@ -1327,12 +1634,15 @@ hooksecurefunc(NamePlateDriverFrame, "OnNamePlateAdded", function(_, unit)
                 -- its OnUnitSet drives it from this event alone; without it the marker
                 -- froze until the plate was re-acquired.
                 uf:RegisterEvent("RAID_TARGET_UPDATE")
+                AttachNameOnlyHitTest(uf)
+                AttachNameOnlyColor(uf.name)
             end
+            UpdateNameOnlyFaction(unit, nameplate)
             EnsureNameUnconstrained(nameplate.UnitFrame.name)
             -- Subtitle Text (inline title + guild line), the Name Format and Name
             -- Color's Custom colour, all composed onto this same FontString.
             if GetBelowNameMode() ~= "none" or FriendlyNameFormat()
-                or ShowFriendlyLevel() or ShowFriendlyGroupBrackets() or NameEsc.Get() then
+                or ShowFriendlyLevel() or ShowFriendlyGroupBrackets() or NameEsc.Get() or ShowNameTags() then
                 AttachNameOnlyText(nameplate.UnitFrame.name, unit)
             end
         end
@@ -1345,11 +1655,16 @@ hooksecurefunc(NamePlateDriverFrame, "OnNamePlateRemoved", function(_, unit)
     -- Clean up the NPC overlay if present. The player name-only text needs no
     -- teardown here: Blizzard has already detached the plate's unit frame (its name
     -- FontString went back to the pool with it), and a FontString that comes back
-    -- on another plate drops its stale unit in UpdateNameOnlyText.
+    -- on another plate drops its stale unit in UpdateNameOnlyText. The guild line
+    -- is our own FontString, so it is hidden here.
     local nameplate = C_NamePlate.GetNamePlateForUnit(unit)
     if nameplate then
+        if hoverNamePlate == nameplate then ClearNameOnlyHover() end
+        if factionRecs[nameplate] then ns.NP_FriendlyFactionHide(factionRecs[nameplate]) end
         HideNPCOverlay(nameplate)
         nameOnlyNPCSuppressed[nameplate] = nil
+        local nameFS = nameplate.UnitFrame and nameplate.UnitFrame.name
+        if nameFS then HideGuildLine(nameFS) end
     end
     if modifiedUFs[unit] then
         RestoreBlizzardUF(unit)
@@ -1497,7 +1812,7 @@ local friendlyFrameCache = CreateFramePool("Frame", UIParent, nil, nil, false, f
     plate.highlight:Hide()
 
     plate.name = plate:CreateFontString(nil, "OVERLAY")
-    SetFSFont(plate.name, GetFriendlyNameTextSize(), "OUTLINE, SLUG")
+    SetFSFont(plate.name, GetFriendlyNameTextSize(), FriendlyNameFlags())
     plate.name:SetPoint("BOTTOM", plate.health, "TOP", 0, 4)
     plate.name:SetWordWrap(false)
     plate.name:SetMaxLines(1)
@@ -1673,7 +1988,8 @@ function FriendlyFrame:UpdateName()
     local fmt = FriendlyNameFormat()
     local showLevel = ShowFriendlyLevel()
     local showGroup = ShowFriendlyGroupBrackets()
-    local isPlayer = (hasTitle or fmt or showLevel or showGroup) and UnitIsPlayer(unit)
+    local tags = ShowNameTags()
+    local isPlayer = (hasTitle or fmt or showLevel or showGroup or tags) and UnitIsPlayer(unit)
     local unitName
     if hasTitle and isPlayer then
         unitName = GetTitledName(unit)
@@ -1686,6 +2002,17 @@ function FriendlyFrame:UpdateName()
     self._grpKind = gKind
     local bOpen  = (gKind == "party" and PARTY_BRACKET_OPEN)  or (gKind == "raid" and RAID_BRACKET_OPEN)  or ""
     local bClose = (gKind == "party" and PARTY_BRACKET_CLOSE) or (gKind == "raid" and RAID_BRACKET_CLOSE) or ""
+    -- Away and Realm Tags wrap the whole name, brackets and level included, as in
+    -- Name Only mode; a secret name gets none.
+    if tags and isPlayer and unitName and not issecretvalue(unitName) then
+        unitName = bOpen .. unitName .. bClose
+        gKind, bOpen, bClose = nil, "", ""
+        if showLevel then
+            unitName = FriendlyLevelText(unit) .. " | " .. unitName
+            showLevel = false
+        end
+        unitName = TagFriendlyName(unit, unitName)
+    end
     if showLevel and isPlayer and unitName then
         -- The name may be secret: only ever a display argument.
         self.name:SetFormattedText("%s | " .. bOpen .. "%s" .. bClose, FriendlyLevelText(unit), unitName)
@@ -2031,6 +2358,7 @@ function ns.RefreshFriendlyColors(paletteChanged)
     for unit, plate in pairs(friendlyPlates) do
         PaintFriendlyColors(plate, unit, fp)
     end
+    ns.NP_SweepNameOnlyPlayers()
     if paletteChanged and fp and fp.friendlyBelowNameClassColor then
         ns.RefreshFriendlyBelowName()
     end
@@ -2040,8 +2368,9 @@ end
 -- slider updates without a /reload. The name carries an explicit outline flag.
 function ns.RefreshFriendlyNameTextSize()
     local size = GetFriendlyNameTextSize()
+    local flags = FriendlyNameFlags()
     for _, plate in pairs(friendlyPlates) do
-        if plate.name then SetFSFont(plate.name, size, "OUTLINE, SLUG") end
+        if plate.name then SetFSFont(plate.name, size, flags) end
     end
 end
 
@@ -2309,6 +2638,8 @@ function ns.UpdateFriendlyNameplateSystem()
     if not InCombatLockdown() then
         local fp = FP()
         local euiManagesPlayers = fp and (fp.showFriendlyPlayers ~= false)
+        WatchNameTags()
+        WatchRelationColors()
         local _, iType = GetInstanceInfo()
         local inInstance = (iType == "party" or iType == "raid" or iType == "scenario" or iType == "arena" or iType == "pvp")
         if IsInFollowerDungeon() then
@@ -2457,6 +2788,7 @@ function ns.UpdateFriendlyNameplateSystem()
 
     -- Apply friendly click-through (independent of player/NPC plate mode).
     ApplyFriendlyClickThrough()
+    ns.NP_SweepNameOnlyPlayers()
 end
 
 -------------------------------------------------------------------------------
