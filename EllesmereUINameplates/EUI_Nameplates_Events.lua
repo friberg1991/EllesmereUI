@@ -275,6 +275,7 @@ factionFrame:SetScript("OnEvent", function(_, event, unit)
         elseif unit == "player" and ns._npFvLevelArmed then
             ns.NP_ForeverSweepLevels()
         end
+        if ns.NP_NameOnlyFaction then ns.NP_NameOnlyFaction(unit) end
     end
 end)
 -- Unified mouseover monitor (enemy + friendly). UPDATE_MOUSEOVER_UNIT fires when a mouseover
@@ -315,6 +316,7 @@ function ns._UpdateMouseover()
         ns.ClearHoverExtras(cur)
         ns._currentMouseoverPlate = nil
     end
+    if ns.UpdateNameOnlyHover then ns.UpdateNameOnlyHover() end
     if not UnitExists("mouseover") then return end
     local found
     for _, plate in pairs(ns.plates) do

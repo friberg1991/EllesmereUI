@@ -229,7 +229,8 @@ local function BuildFriendlyPage(pageName, parent, yOffset)
     SearchWords("Friendly Nameplate Style", "FRIENDLY PLAYERS", "Show EUI Friendly Player Nameplates",
         "Make Friendly Nameplates Name Only", npSizeRow.label, npSizeRow.tooltip, bracketsRow.label, bracketsRow.tooltip,
         unpack(OFF_PAGE))
-    SearchWords("Name Color", "FRIENDLY PLAYERS", "Class Colored Names", "Class Color", "Custom Color")
+    SearchWords("Name Color", "FRIENDLY PLAYERS", "Class Colored Names", "Class Color", "Custom Color",
+        "Relationship Colors", "Pick Colors")
     local friendlyRow
     friendlyRow, h = W:DualRow(parent, y,
         { type="dropdown", text="Friendly Nameplate Style",
@@ -251,6 +252,49 @@ local function BuildFriendlyPage(pageName, parent, yOffset)
             title = "Friendly Nameplate Settings",
             rows = { npSizeRow, bracketsRow },
             quiet = true,
+        })
+    end
+
+    -- Name Color inline cog: Relationship Colors and its four colours. One swatch
+    -- shows the colour saved under `key`, else the game's own colour for that
+    -- relationship (r, g, b), which the name shows until one is picked.
+    local function RelationSwatch(key, r, g, b, tip)
+        return { tooltip = tip, hasAlpha = false,
+            getValue = function()
+                local c = DBVal(key)
+                if c then return c.r, c.g, c.b end
+                return r, g, b
+            end,
+            setValue = function(nr, ng, nb)
+                DB()[key] = { r = nr, g = ng, b = nb }
+                ns.RefreshFriendlyColors()
+            end }
+    end
+    if not EllesmereUI._prebuilding then
+        EllesmereUI.BuildInlineCog(friendlyRow._rightRegion, {
+            disabled = friendlyPlayersOff,
+            disabledTooltip = STYLE_REQ, rawTooltip = true,
+            title = "Name Color Settings",
+            rows = {
+                { type = "toggle", label = "Relationship Colors",
+                  tooltip = "While names are class colored, players in your group, on your friends list or recently grouped with take their relationship color (the game's own colors until you pick one below).",
+                  get = function() return DBVal("friendlyNameRelationColor") == true end,
+                  set = function(v)
+                    if v then DB().friendlyNameRelationColor = true else DB().friendlyNameRelationColor = nil end
+                    if ns.UpdateFriendlyNameplateSystem then ns.UpdateFriendlyNameplateSystem() end
+                    ns.RefreshFriendlyColors()
+                  end },
+                { type = "multiswatch", label = "Pick Colors",
+                  disabled = function() return DBVal("friendlyNameRelationColor") ~= true end,
+                  disabledTooltip = "This option requires Relationship Colors",
+                  rawTooltip = true,
+                  swatches = {
+                    RelationSwatch("friendlyNameGroupColor", 0.67, 0.67, 1, "Group: players in your party or raid"),
+                    RelationSwatch("friendlyNameGroupPvPColor", 0.67, 1, 0.67, "Group in War Mode: players in your party or raid while War Mode is on"),
+                    RelationSwatch("friendlyNameFriendColor", 0.33, 0.79, 1, "Friend: players on your friends list"),
+                    RelationSwatch("friendlyNameAllyColor", 0.33, 0.79, 1, "Recent Ally: players you recently grouped with"),
+                  } },
+            },
         })
     end
 
@@ -441,6 +485,7 @@ local function BuildFriendlyPage(pageName, parent, yOffset)
                 title = "Name Distance",
                 rows = {
                     { type = "slider", label = "Distance", min = -50, max = 50, step = 1,
+                      tooltip = "Moves friendly names up or down. Only the part of a name inside the nameplate's click area can be clicked, so a name lifted far above it cannot be; around -20 keeps names clickable.",
                       get = function() return DBVal("friendlyNameOnlyYOffset") or defaults.friendlyNameOnlyYOffset end,
                       set = function(v)
                         DB().friendlyNameOnlyYOffset = v
@@ -449,6 +494,24 @@ local function BuildFriendlyPage(pageName, parent, yOffset)
                 },
             })
         end
+        -- Player Name Format inline cog: the game's own away and realm tags.
+        EllesmereUI.BuildInlineCog(sizeRow._rightRegion, {
+            disabled = friendlyPlayersOff,
+            disabledTooltip = STYLE_REQ, rawTooltip = true,
+            title = "Player Name Settings",
+            rows = {
+                { type = "toggle", label = EllesmereUI.IS_FOREVER and "Show Away Tags" or "Show Away and Realm Tags",
+                  tooltip = EllesmereUI.IS_FOREVER and "As the game's own names above players: <Away> or <Busy> before a friendly player's name."
+                      or "As the game's own names above players: <Away> or <Busy> before a friendly player's name, and (*) after a name or guild from another realm.",
+                  get = function() return DBVal("friendlyNameStatusTags") == true end,
+                  set = function(v)
+                    if v then DB().friendlyNameStatusTags = true else DB().friendlyNameStatusTags = nil end
+                    if ns.UpdateFriendlyNameplateSystem then ns.UpdateFriendlyNameplateSystem() end
+                    if ns.RefreshFriendlyBelowName then ns.RefreshFriendlyBelowName() end
+                    ns.NPO_FriendlyPreviewUpdate()
+                  end },
+            },
+        })
     end
 
     ---------------------------------------------------------------
@@ -508,9 +571,9 @@ local function BuildFriendlyPage(pageName, parent, yOffset)
     -- dropdown reads those keys, so Spec Overrides know the slot by them. Both
     -- answer in Global Search to the names their settings had.
     local SUBTITLE_TIP = "Show the player's title inline with their name, and/or their guild on a line below it, on friendly nameplates."
-    -- Guild Text Size: the one row of Subtitle Text's cog. The guild line is a text
-    -- of its own only on the health bar plate; under Name Only it is the second
-    -- line of the name and takes the name's size, so the cog greys there.
+    -- Guild Text Size: the one row of Subtitle Text's cog. Under Name Only the
+    -- guild is the second line of the name, at the name's size, until this size
+    -- differs from Friendly Name Size: then it is a line of its own.
     local guildSizeRow =
         { type="slider", label="Guild Text Size", min=6, max=30, step=1,
           tooltip="Size of the guild line under friendly player names.",
@@ -598,11 +661,8 @@ local function BuildFriendlyPage(pageName, parent, yOffset)
         EllesmereUI.BuildInlineCog(rgn, {
             title = "Subtitle Text Settings",
             rows = { guildSizeRow },
-            disabled = function() return friendlyPlateOff() or subtitleGuildOff() end,
-            disabledTooltip = function()
-                if friendlyPlateOff() then return PLATE_TIP end
-                return guildOffTip()
-            end,
+            disabled = subtitleGuildOff,
+            disabledTooltip = guildOffTip,
             rawTooltip = true,
         })
     end
