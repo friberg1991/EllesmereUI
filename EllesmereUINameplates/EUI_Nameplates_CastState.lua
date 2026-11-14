@@ -362,6 +362,11 @@ local function SetupAuraCVars()
         EllesmereUI.SetCVar("nameplateShowFriendlyNPCs", showNPCs and 1 or 0, "EllesmereUINameplates")
         EllesmereUI.SetCVar("nameplateShowFriendlyNpcs", showNPCs and 1 or 0, "EllesmereUINameplates")
         EllesmereUI.SetCVar("nameplateShowEnemyPets", (db.showEnemyPets == true) and 1 or 0, "EllesmereUINameplates")
+        -- Show Friendly Pet Nameplates, off with the friendly player plates; unset
+        -- leaves the game's own choice.
+        if db.showFriendlyPets ~= nil and ns.SetFriendlyPetCVars then
+            ns.SetFriendlyPetCVars(db.showFriendlyPets and showPlayers)
+        end
         if showPlayers then
             EllesmereUI.SetCVar("ShowClassColorInFriendlyNameplate", (db.classColorFriendly ~= false) and 1 or 0, "EllesmereUINameplates")
         end
