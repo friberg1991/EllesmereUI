@@ -44,8 +44,13 @@ local function BuildFriendlyPage(pageName, parent, yOffset)
     local function friendlyPlateOff() return friendlyPlayersOff() or DBVal("friendlyNameOnly") ~= false end
     local function nameOnlyOff() return friendlyPlayersOff() or DBVal("friendlyNameOnly") == false end
     -- Title renders INLINE with the name (one string, takes the name's own font/size/color); only the guild line below is styled by the size/color/bracket controls, so those gate on a mode that includes guild.
+    -- Show Pet Owner styles a pet's owner line with the guild line's size and colour,
+    -- so those stay on while it shows one.
     local function subtitleGuildOff()
         local m = DBVal("friendlyBelowName") or "none"
+        if not friendlyPlayersOff() and DBVal("showFriendlyPets") == true and DBVal("friendlyPetOwner") ~= false then
+            return false
+        end
         return friendlyPlayersOff() or (m ~= "guild" and m ~= "both")
     end
     -- Why a row is greyed under a Friendly Nameplate Style, shown as written: the
@@ -56,7 +61,7 @@ local function BuildFriendlyPage(pageName, parent, yOffset)
     -- Why a control of the guild line is greyed (its row and its cog).
     local function guildOffTip()
         if friendlyPlayersOff() then return STYLE_REQ end
-        return "This option requires Subtitle Text to include the Guild Name"
+        return "This option requires Subtitle Text to include the Guild Name, or Show Pet Owner"
     end
 
     -- Blizzard's nameplateSize CVar, the one row of the first row's cog: read by
@@ -131,6 +136,10 @@ local function BuildFriendlyPage(pageName, parent, yOffset)
             end
             -- Blizzard colours the names it draws by this CVar, and the two styles can answer differently.
             pcall(EllesmereUI.SetCVar, "nameplateUseClassColorForFriendlyPlayerUnitNames", ns.FriendlyNameClassCVar(db), "EllesmereUINameplates")
+        end
+        -- Friendly pet plates go with the friendly player plates.
+        if db.showFriendlyPets ~= nil and ns.SetFriendlyPetCVars then
+            ns.SetFriendlyPetCVars(db.showFriendlyPets and v ~= "blizzard")
         end
         if ns.UpdateFriendlyNameplateSystem then ns.UpdateFriendlyNameplateSystem() end
         -- Re-assert stacking after EUI takes or hands back the friendly plates (Blizzard can reset the stacking bitfield as a side effect).
@@ -576,7 +585,7 @@ local function BuildFriendlyPage(pageName, parent, yOffset)
     -- differs from Friendly Name Size: then it is a line of its own.
     local guildSizeRow =
         { type="slider", label="Guild Text Size", min=6, max=30, step=1,
-          tooltip="Size of the guild line under friendly player names.",
+          tooltip="Size of the guild line under friendly player names, and of the owner line under a pet's name.",
           get=function() return DBVal("friendlyBelowNameSize") or defaults.friendlyBelowNameSize end,
           set=function(v)
             DB().friendlyBelowNameSize = v
@@ -702,6 +711,46 @@ local function BuildFriendlyPage(pageName, parent, yOffset)
             for _, fp in pairs(ns.friendlyPlates) do fp:ApplyTarget() end
             UpdatePreview()
           end });  y = y - h
+
+    -- Show Friendly Pet Nameplates, with Show Pet Owner in its cog.
+    SearchWords("Show Friendly Pet Nameplates", "FRIENDLY PLAYERS", "Show Pet Owner", "Friendly Pet Settings")
+    local petRow
+    petRow, h = W:DualRow(parent, y,
+        { type="toggle", text="Show Friendly Pet Nameplates",
+          tooltip="Toggle visibility of other players' pet, guardian and totem nameplates. They take the friendly player look: a name sized like friendly player names under Name Only, the friendly health bar under Nameplate.\n\nIn dungeons, raids and other instances the game locks these plates, so they are hidden there under Name Only.",
+          disabled=friendlyPlayersOff,
+          disabledTooltip=STYLE_REQ, rawTooltip=true,
+          getValue=function()
+            local v = DBVal("showFriendlyPets")
+            if v == nil then return GetCVarBool("nameplateShowFriendlyPlayerPets") end
+            return v
+          end,
+          setValue=function(v)
+            DB().showFriendlyPets = v and true or false
+            if ns.SetFriendlyPetCVars then ns.SetFriendlyPetCVars(v) end
+            if ns.UpdateFriendlyNameplateSystem then ns.UpdateFriendlyNameplateSystem() end
+            EllesmereUI:RefreshPage()
+          end },
+        EllesmereUI.BlankRowCfg());  y = y - h
+    if not EllesmereUI._prebuilding then
+        EllesmereUI.BuildInlineCog(petRow._leftRegion, {
+            disabled = function() return friendlyPlayersOff() or DBVal("showFriendlyPets") ~= true end,
+            disabledTooltip = "Show Friendly Pet Nameplates",
+            title = "Friendly Pet Settings",
+            rows = {
+                { type = "toggle", label = "Show Pet Owner",
+                  tooltip = "The owner line under a pet's name, such as <Name's Pet>. It takes the guild line's color, brackets and size.",
+                  get = function() return DBVal("friendlyPetOwner") ~= false end,
+                  set = function(v)
+                    if v then DB().friendlyPetOwner = nil else DB().friendlyPetOwner = false end
+                    if ns.RefreshAllNPCOverlays then ns.RefreshAllNPCOverlays() end
+                    if ns.RefreshFriendlyBelowName then ns.RefreshFriendlyBelowName() end
+                    -- The guild line's size and colour follow this.
+                    EllesmereUI:RefreshPage()
+                  end },
+            },
+        })
+    end
 
     _, h = W:Spacer(parent, y, 20);  y = y - h
 
