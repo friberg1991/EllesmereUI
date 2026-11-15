@@ -432,7 +432,10 @@ manager:SetScript("OnEvent", function(self, event, unit)
     elseif event == "NAME_PLATE_UNIT_REMOVED" then
         questMobCache[unit] = nil
         ns._questObjText[unit] = nil
-        if ns._questObjectiveTypeEnabled then ns._questObjType[unit] = nil end
+        if ns._questObjectiveTypeEnabled then
+            ns._questObjType[unit] = nil
+            ns._questObjTypes[unit] = nil
+        end
         -- The driver has already released this base's UnitFrame (base.UnitFrame is nil
         -- here); its parked pieces come back on the next acquire (ns.NP_ReclaimBlizzardFrame).
         local nameplate = C_NamePlate.GetNamePlateForUnit(unit)
