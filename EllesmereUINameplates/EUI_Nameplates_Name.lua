@@ -264,10 +264,58 @@ local function QuestTextMeasure(text, size, font, outline)
     if not (h and h > 0) then h = size end
     return math.ceil(w), math.ceil(h)
 end
+-- Sword for kill objectives, bag for item objectives, the quest icon otherwise.
+local function QuestTypeIconArt(icon, objectiveType)
+    local art = objectiveType == "monster" and "monster"
+        or (objectiveType == "item" and "item" or "generic")
+    if icon._qtArt == art then return end
+    if art == "monster" then
+        icon:SetTexture("Interface\\Icons\\INV_Sword_04")
+    elseif art == "item" then
+        icon:SetTexture("Interface\\Icons\\INV_Misc_Bag_08")
+    else
+        icon:SetAtlas("Crosshair_Quest_64")
+    end
+    icon._qtArt = art
+end
+-- Show All Objectives: the type icons of the second and later stacked lines, each centred on its
+-- line below the first icon (topY).
+local function QuestTextExtraTypeIcons(self, f, types, lines, iconX, topY, lineH, iconSize)
+    local icons = self.questTextTypeIcons
+    if not icons then
+        icons = {}
+        self.questTextTypeIcons = icons
+    end
+    for i = 2, math.max(lines, #icons + 1) do
+        local icon = icons[i - 1]
+        if i <= lines then
+            if not icon then
+                icon = f:CreateTexture(nil, "ARTWORK")
+                icons[i - 1] = icon
+            end
+            QuestTypeIconArt(icon, types[i])
+            local y = topY - (i - 1) * lineH
+            if icon._qtX ~= iconX or icon._qtY ~= y or icon._qtSize ~= iconSize then
+                icon:ClearAllPoints()
+                icon:SetSize(iconSize, iconSize)
+                icon:SetPoint("LEFT", f, "CENTER", iconX, y)
+                icon._qtX, icon._qtY, icon._qtSize = iconX, y, iconSize
+            end
+            icon:Show()
+        elseif icon and icon:IsShown() then
+            icon:Hide()
+        end
+    end
+end
 local function QuestTextTypeIconHide(self)
     local f = self.questTextFrame
     local icon = self.questTextTypeIcon
     if icon and icon:IsShown() then icon:Hide() end
+    if self.questTextTypeIcons then
+        for _, extra in ipairs(self.questTextTypeIcons) do
+            if extra:IsShown() then extra:Hide() end
+        end
+    end
     if f and f._qtTypeIconOn then
         self.questText:ClearAllPoints()
         self.questText:SetPoint("CENTER", f, "CENTER", 0, 0)
@@ -302,7 +350,8 @@ function NameplateFrame:UpdateQuestText(chainedBy)
         QuestTextHide(self, chainedBy)
         return
     end
-    if (InInstance() and not ns.NP_ShowInInstances("questtext")) or not ns.IsQuestMob(unit) then
+    if (InInstance() and not ns.NP_ShowInInstances("questtext"))
+        or not (ns.IsQuestMob(unit) or ns.GetQuestObjectiveText(unit)) then
         QuestTextHide(self, chainedBy)
         return
     end
@@ -344,6 +393,10 @@ function NameplateFrame:UpdateQuestText(chainedBy)
         -- plain string: SetFormattedText's "%s" is the secret-safe text path all the same).
         if f._qtText ~= text or f._qtSize ~= size or f._qtFont ~= font or f._qtOutline ~= outline then
             SetFSFont(fs, size, outline)
+            -- Show All Objectives stacks the objectives, one per line, aligned on the icon side.
+            local stacked = p and p.questObjectiveShowAll == true or false
+            fs:SetWordWrap(stacked)
+            fs:SetJustifyH(stacked and "RIGHT" or "CENTER")
             fs:SetFormattedText("%s", text)
             f._qtW, f._qtH = QuestTextMeasure(text, size, font, outline)
             f._qtText, f._qtSize, f._qtFont, f._qtOutline = text, size, font, outline
@@ -356,32 +409,29 @@ function NameplateFrame:UpdateQuestText(chainedBy)
                 typeIcon:SetAtlas("Crosshair_Quest_64")
                 self.questTextTypeIcon = typeIcon
             end
-            local objectiveType = ns.GetQuestObjectiveType(unit)
-            local art = objectiveType == "monster" and "monster"
-                or (objectiveType == "item" and "item" or "generic")
-            if f._qtTypeIconArt ~= art then
-                if art == "monster" then
-                    typeIcon:SetTexture("Interface\\Icons\\INV_Sword_04")
-                elseif art == "item" then
-                    typeIcon:SetTexture("Interface\\Icons\\INV_Misc_Bag_08")
-                else
-                    typeIcon:SetAtlas("Crosshair_Quest_64")
-                end
-                f._qtTypeIconArt = art
-            end
+            QuestTypeIconArt(typeIcon, ns.GetQuestObjectiveType(unit))
             local fullW, fullH, textX, iconX, iconSize = ns.NP_QuestTypeIconLayout(f._qtW, f._qtH, size,
                 p.questObjectiveTypeIconScale or 100)
-            -- Laid out again only when the count's width or the icon's size moved.
-            if not f._qtTypeIconOn or f._qtTypeIconCounterW ~= f._qtW or f._qtTypeIconW ~= iconSize then
+            -- Show All Objectives: one icon per stacked line, the first at the top.
+            local types = p.questObjectiveShowAll == true and ns.GetQuestObjectiveTypes(unit) or nil
+            local lines = types and math.max(#types, 1) or 1
+            local lineH = f._qtH / lines
+            local iconY = (lines - 1) * lineH / 2
+            -- Laid out again only when the count's width, the icon's size or its line moved.
+            if not f._qtTypeIconOn or f._qtTypeIconCounterW ~= f._qtW or f._qtTypeIconW ~= iconSize
+                or f._qtTypeIconY ~= iconY then
                 fs:ClearAllPoints()
                 fs:SetPoint("CENTER", f, "CENTER", textX, 0)
                 typeIcon:ClearAllPoints()
                 typeIcon:SetSize(iconSize, iconSize)
-                typeIcon:SetPoint("LEFT", f, "CENTER", iconX, 0)
+                typeIcon:SetPoint("LEFT", f, "CENTER", iconX, iconY)
                 f._qtTypeIconOn = true
-                f._qtTypeIconCounterW, f._qtTypeIconW = f._qtW, iconSize
+                f._qtTypeIconCounterW, f._qtTypeIconW, f._qtTypeIconY = f._qtW, iconSize, iconY
             end
             typeIcon:Show()
+            if lines > 1 or self.questTextTypeIcons then
+                QuestTextExtraTypeIcons(self, f, types, lines, iconX, iconY, lineH, iconSize)
+            end
             w, h = fullW, fullH
         elseif self.questTextTypeIcon then
             QuestTextTypeIconHide(self)
