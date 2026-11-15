@@ -363,6 +363,7 @@ local questObjectiveTypeCache = {}
 -- only while the Quest Objective Text element is on; same invalidation lifecycle. On ns (cap).
 ns._questObjText = ns._questObjText or {}
 ns._questObjType = ns._questObjType or {}
+ns._questObjTypes = ns._questObjTypes or {}
 local function ResolveQuestObjectiveType(questID, tooltipText, isOnQuest)
     if not issecretvalue then return nil end
     if issecretvalue(questID) or issecretvalue(isOnQuest) or issecretvalue(tooltipText) then return nil end
@@ -419,7 +420,7 @@ local IsQuestMob
 do
     -- The settings both caches were built under (ScanState); a call under other settings
     -- wipes them first, so a cache never answers for settings it was not built with.
-    local built, builtType
+    local built, builtType, builtAll, builtColor, builtDone
     -- 1 while the Quest Objective Text element is on (the scan reads the objective text).
     -- In instanced content, plus 2 while a consumer may show the result there (the Quest
     -- Indicator, the quest mob health color or the Quest Objective Text, each with its Show
@@ -438,15 +439,23 @@ do
         if not (C_TooltipInfo and Enum and Enum.TooltipDataLineType) then return false end
         local st = ScanState()
         local typeOn = p and p.showQuestObjectiveTypeIcon == true or false
-        if st ~= built or typeOn ~= builtType then
+        local allOn = p and p.questObjectiveShowAll == true or false
+        local colorOn = p and p.questObjectiveProgressColor == true or false
+        local doneOn = allOn and p.questObjectiveShowDone == true
+        if st ~= built or typeOn ~= builtType or allOn ~= builtAll or colorOn ~= builtColor
+            or doneOn ~= builtDone then
             wipe(questMobCache)
             wipe(ns._questObjText)
             if typeOn then
                 wipe(questObjectiveTypeCache)
                 wipe(ns._questObjType)
+                wipe(ns._questObjTypes)
             end
             built = st
             builtType = typeOn
+            builtAll = allOn
+            builtColor = colorOn
+            builtDone = doneOn
         end
         local cached = questMobCache[unit]
         if cached ~= nil then return cached end
@@ -467,9 +476,13 @@ do
         local onQuest = C_QuestLog and C_QuestLog.IsOnQuest
         local wantText = (st % 2) == 1
         local wantType = wantText and typeOn
-        if wantType then ns._questObjType[unit] = nil end
+        if wantType then
+            ns._questObjType[unit] = nil
+            if ns._questObjTypes[unit] then wipe(ns._questObjTypes[unit]) end
+        end
         local questID  -- id carried by the most recent QuestTitle line
         local isQuest, objText = false, nil
+        local lines = 0
 
         for _, line in ipairs(info.lines) do
             local kind = line.type
@@ -485,11 +498,13 @@ do
                 -- An incomplete objective the player is actually on: their quest log scopes out
                 -- a group member's objectives. Fail open when the id is unreadable so a real
                 -- quest mob is never silently skipped.
-                if not (issecretvalue and issecretvalue(done)) and done == false then
+                -- Show Finished Objectives keeps a finished one's text until the turn-in.
+                if not (issecretvalue and issecretvalue(done))
+                    and (done == false or (doneOn and done == true)) then
                     local onQuestResult = true
                     if questID and onQuest then onQuestResult = onQuest(questID) end
                     if onQuestResult then
-                        isQuest = true
+                        if done == false then isQuest = true end
                         if wantText then
                             local have, need = line.numFulfilled, line.numRequired
                             if have and need
@@ -505,14 +520,36 @@ do
                                    and type(lt) == "string" then
                                     pct = lt:match("(%d+)%s*%%")
                                 end
-                                objText = pct and (pct .. "%") or (have .. "/" .. need)
-                                if wantType and objText and questID and onQuest and issecretvalue
-                                    and not issecretvalue(onQuestResult) and onQuestResult == true then
-                                    ns._questObjType[unit] = ResolveQuestObjectiveType(questID, lt, onQuestResult)
+                                local text = pct and (pct .. "%") or (have .. "/" .. need)
+                                -- Color by Progress: white at the start, green near done. A
+                                -- finished objective is always green.
+                                if colorOn or done then
+                                    local frac = done and 1 or pct and (tonumber(pct) or 0) / 100
+                                        or (type(have) == "number" and type(need) == "number" and need > 0
+                                            and have / need or 0)
+                                    if frac > 1 then frac = 1 end
+                                    local rb = math.floor((1 - 0.75 * frac) * 255 + 0.5)
+                                    text = string.format("|cff%02xff%02x%s|r", rb, rb, text)
                                 end
+                                lines = lines + 1
+                                if wantType then
+                                    local objectiveType
+                                    if questID and onQuest and issecretvalue
+                                        and not issecretvalue(onQuestResult) and onQuestResult == true then
+                                        objectiveType = ResolveQuestObjectiveType(questID, lt, onQuestResult)
+                                    end
+                                    if lines == 1 then ns._questObjType[unit] = objectiveType end
+                                    -- Show All Objectives: one type per stacked line.
+                                    if allOn then
+                                        local types = ns._questObjTypes[unit] or {}
+                                        types[lines] = objectiveType or false
+                                        ns._questObjTypes[unit] = types
+                                    end
+                                end
+                                objText = objText and (objText .. "\n" .. text) or text
                             end
                         end
-                        break
+                        if not (wantText and allOn) then break end
                     end
                 end
             end
@@ -520,7 +557,7 @@ do
 
         questMobCache[unit] = isQuest
         if wantText then
-            ns._questObjText[unit] = isQuest and objText or nil
+            ns._questObjText[unit] = (isQuest or doneOn) and objText or nil
         end
         return isQuest
     end
@@ -535,10 +572,14 @@ end
 function ns.GetQuestObjectiveType(unit)
     return ns._questObjType[unit]
 end
+function ns.GetQuestObjectiveTypes(unit)
+    return ns._questObjTypes[unit]
+end
 function ns.InvalidateQuestObjectiveTypeCache()
     if not ns._questObjectiveTypeEnabled then return end
     wipe(questObjectiveTypeCache)
     wipe(ns._questObjType)
+    wipe(ns._questObjTypes)
 end
 
 -- Live refresh for the quest options (the Rare/Quest and Quest Objective Text boxes, Show In

@@ -1920,6 +1920,31 @@ local function BuildDisplayLayout(parent, y, ctx)
                       ns.RefreshQuestObjective()
                       refresh()
                   end },
+                { type = "toggle", label = "Show All Objectives",
+                  tooltip = "Shows the progress of every unfinished objective the unit counts toward, not only the first.",
+                  get = function() return DBVal("questObjectiveShowAll") == true end,
+                  set = function(v)
+                      DB().questObjectiveShowAll = v and true or false
+                      ns.RefreshQuestObjective()
+                      refresh()
+                  end },
+                { type = "toggle", label = "Show Finished Objectives",
+                  tooltip = "Keeps finished objectives on the plate, in green, until the quest is turned in.",
+                  hidden = function() return DBVal("questObjectiveShowAll") ~= true end,
+                  get = function() return DBVal("questObjectiveShowDone") == true end,
+                  set = function(v)
+                      DB().questObjectiveShowDone = v and true or false
+                      ns.RefreshQuestObjective()
+                      refresh()
+                  end },
+                { type = "toggle", label = "Color by Progress",
+                  tooltip = "Tints the progress text from white toward green as the objective nears completion.",
+                  get = function() return DBVal("questObjectiveProgressColor") == true end,
+                  set = function(v)
+                      DB().questObjectiveProgressColor = v and true or false
+                      ns.RefreshQuestObjective()
+                      refresh()
+                  end },
                 InstancesRow("questtext"),
             } },
             { title = "Faction", hidden = Lacks("faction"), rows = {
