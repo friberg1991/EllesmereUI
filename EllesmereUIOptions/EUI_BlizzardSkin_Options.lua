@@ -2630,6 +2630,60 @@ initFrame:SetScript("OnEvent", function(self)
         return y
     end
 
+    local function BuildLootRollContent(parent, y)
+        local W = EllesmereUI.Widgets
+        local _, h
+        local function Window() return EllesmereUI._LootRollWindow end
+        local function WindowOn() return Window() and Window().Enabled() end
+
+        _, h = WSCardSection(parent, "QUALITY OF LIFE", y);  y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Who Rolled",
+              tooltip="Counts the group's Need, Greed and Pass picks on each roll button, and lists who picked it and what they rolled when you hover it.",
+              getValue=function()
+                  return EllesmereUIDB and EllesmereUIDB.lootRollWhoRolled == true
+              end,
+              setValue=function(v)
+                  if not EllesmereUIDB then EllesmereUIDB = {} end
+                  EllesmereUIDB.lootRollWhoRolled = v
+                  if EllesmereUI._LootRoll_SetWhoRolled then EllesmereUI._LootRoll_SetWhoRolled(v) end
+                  if Window() then Window().Apply() end
+              end },
+            { type="toggle", text="Show Preview",
+              tooltip="Shows sample rolls where they appear, with made-up picks. Nothing is rolled.",
+              disabled=function() return not (WindowOn() or EllesmereUI._LootRoll_Preview) end,
+              getValue=function()
+                  if WindowOn() then return Window().Preview() end
+                  return EllesmereUI._LootRoll_Preview and EllesmereUI._LootRoll_Preview() or false
+              end,
+              setValue=function(v)
+                  if WindowOn() then
+                      Window().Preview(v)
+                  elseif EllesmereUI._LootRoll_Preview then
+                      EllesmereUI._LootRoll_Preview(v)
+                  end
+              end }
+        ); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Roll Window",
+              tooltip="Shows every roll as a row in a window of its own, in place of the roll popups. If it ever hits an error, the popups come back until you reload. Move it in Unlock Mode.",
+              getValue=function()
+                  return EllesmereUIDB and EllesmereUIDB.lootRollWindow == true
+              end,
+              setValue=function(v)
+                  if not EllesmereUIDB then EllesmereUIDB = {} end
+                  EllesmereUIDB.lootRollWindow = v
+                  if EllesmereUI._LootRoll_Preview then EllesmereUI._LootRoll_Preview(false) end
+                  if Window() then Window().Apply() end
+              end },
+            { type="label", text="" }
+        ); y = y - h
+
+        return y
+    end
+
     ---------------------------------------------------------------------------
     --  Mail card, ALT LIST section: the Alt List beside Send Mail
     --  (EllesmereUIBlizzardSkin_MailAlts.lua, ns.MailAlts), whatever the card's
@@ -3119,6 +3173,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if not EllesmereUIDB then EllesmereUIDB = {} end
                 EllesmereUIDB.reskinLootRoll = v
             end,
+            buildContent = BuildLootRollContent,
         },
         {
             key   = "loothistory",

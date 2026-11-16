@@ -12750,22 +12750,23 @@ function LP.SkinRollFrame(f)
     -- mistake as a square crop.
     if icon and icon.SetTexCoord and WSkin.SquareIcon(icon, nil) then
         local qr, qg, qb = 0, 0, 0
+        local quality = GetFFD(f).sampleQuality
         if f.rollID and type(_G.GetLootRollItemInfo) == "function" then
-            local _, _, _, quality = GetLootRollItemInfo(f.rollID)
-            if type(quality) == "number" then
-                local cr, cg, cb
-                if C_Item and C_Item.GetItemQualityColor then
-                    cr, cg, cb = C_Item.GetItemQualityColor(quality)
-                elseif GetItemQualityColor then
-                    cr, cg, cb = GetItemQualityColor(quality)
-                end
-                -- Same uncommon-and-up rule the other surfaces get from
-                -- WSkin.RingQuality, applied to the same chroma test so a
-                -- common drop looks identical across all of them.
-                if type(cr) == "number"
-                   and (math.max(cr, cg, cb) - math.min(cr, cg, cb)) > 0.1 then
-                    qr, qg, qb = cr, cg, cb
-                end
+            quality = select(4, GetLootRollItemInfo(f.rollID))
+        end
+        if type(quality) == "number" then
+            local cr, cg, cb
+            if C_Item and C_Item.GetItemQualityColor then
+                cr, cg, cb = C_Item.GetItemQualityColor(quality)
+            elseif GetItemQualityColor then
+                cr, cg, cb = GetItemQualityColor(quality)
+            end
+            -- Same uncommon-and-up rule the other surfaces get from
+            -- WSkin.RingQuality, applied to the same chroma test so a
+            -- common drop looks identical across all of them.
+            if type(cr) == "number"
+               and (math.max(cr, cg, cb) - math.min(cr, cg, cb)) > 0.1 then
+                qr, qg, qb = cr, cg, cb
             end
         end
         WSkin.QualityBorder(host or f, icon, qr, qg, qb)
@@ -12791,6 +12792,8 @@ function LP.SkinRollFrame(f)
 
     -- Name keeps its item-quality color; only the face changes.
     if f.Name then WSkin.Font(f.Name) end
+
+    if LP.whoRolled then LP.TagRollButtons(f) end
 end
 
 function LP.SkinAllRolls()
@@ -12823,7 +12826,175 @@ function LP.ApplyLootRoll()
     ev:RegisterEvent("START_LOOT_ROLL")
     ev:SetScript("OnEvent", resweep)
 
+    EllesmereUI._LootRoll_SetWhoRolled = LP.SetWhoRolled
+    EllesmereUI._LootRoll_Preview = LP.Preview
+    if EllesmereUIDB and EllesmereUIDB.lootRollWhoRolled == true then
+        LP.SetWhoRolled(true)
+    else
+        LP.SkinAllRolls()
+    end
+end
+
+-------------------------------------------------------------------------------
+--  Show Who Rolled: each roll button counts the group's picks for it and lists
+--  them on hover. A loot history drop carries no rollID, so it is matched to
+--  the popup showing the same item.
+-------------------------------------------------------------------------------
+LP.ROLL_BUTTON_KEYS = { NeedButton = "need", GreedButton = "greed", TransmogButton = "greed", PassButton = "pass" }
+
+function LP.RollPick(state)
+    local S = Enum.EncounterLootDropRollState
+    if state == S.NeedMainSpec or state == S.NeedOffSpec then return "need" end
+    if state == S.Greed or state == S.Transmog then return "greed" end
+    if state == S.Pass then return "pass" end
+end
+
+-- The drop shown on popup f; nil once the popup has moved on to another roll.
+function LP.RollDrop(f)
+    local d = GetFFD(f)
+    if d.dropFor == f.rollID then return d.drop end
+end
+
+function LP.RollButtonEnter(btn)
+    local d = GetFFD(btn)
+    local drop = LP.whoRolled and LP.RollDrop(d.rollFrame)
+    if not (drop and GameTooltip:IsOwned(btn)) then return end
+    local any = false
+    for _, entry in ipairs(drop.rollInfos) do
+        if LP.RollPick(entry.state) == d.pick then
+            local c = EllesmereUI.GetClassColor(entry.playerClass)
+            GameTooltip:AddLine(EllesmereUI.HexColor(c.r, c.g, c.b) .. entry.playerName .. "|r"
+                .. (entry.roll and ("  " .. entry.roll) or ""))
+            any = true
+        end
+    end
+    if any then GameTooltip:Show() end
+end
+
+function LP.TagRollButtons(f)
+    local host = f.LootButtonContainer or f
+    local drop = LP.whoRolled and LP.RollDrop(f)
+    for name, pick in pairs(LP.ROLL_BUTTON_KEYS) do
+        local btn = host[name]
+        if btn then
+            local d = GetFFD(btn)
+            if not d.count then
+                d.rollFrame, d.pick = f, pick
+                d.count = btn:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+                d.count:SetPoint("TOPRIGHT", 4, 2)
+                btn:HookScript("OnEnter", LP.RollButtonEnter)
+            end
+            local n = 0
+            if drop then
+                for _, entry in ipairs(drop.rollInfos) do
+                    if LP.RollPick(entry.state) == pick then n = n + 1 end
+                end
+            end
+            d.count:SetText(n > 0 and n or "")
+        end
+    end
+end
+
+function LP.OnRollDrop(_, _, encounterID, lootListID)
+    local info = C_LootHistory.GetSortedInfoForDrop(encounterID, lootListID)
+    local link = info and info.itemHyperlink
+    if not link then return end
+    local key = encounterID .. ":" .. lootListID
+    local itemID = C_Item.GetItemInfoInstant(link)
+    local match
+    for i = 1, 4 do
+        local f = _G["GroupLootFrame" .. i]
+        if f and f.rollID and f:IsShown() then
+            local d = GetFFD(f)
+            if d.dropFor == f.rollID then
+                if d.dropKey == key then
+                    match = f
+                    break
+                end
+            elseif not match and not (info.winner or info.allPassed) then
+                -- A decided drop is an earlier copy of the item, never this open roll.
+                local rollLink = GetLootRollItemLink(f.rollID)
+                if rollLink and C_Item.GetItemInfoInstant(rollLink) == itemID then match = f end
+            end
+        end
+    end
+    if not match then return end
+    local d = GetFFD(match)
+    d.drop, d.dropFor, d.dropKey = info, match.rollID, key
+    LP.TagRollButtons(match)
+end
+
+function LP.SetWhoRolled(on)
+    LP.whoRolled = on
+    if on and not LP.whoRolledEvents then
+        LP.whoRolledEvents = CreateFrame("Frame")
+        LP.whoRolledEvents:SetScript("OnEvent", LP.OnRollDrop)
+    end
+    if LP.whoRolledEvents then
+        if on then
+            LP.whoRolledEvents:RegisterEvent("LOOT_HISTORY_UPDATE_DROP")
+        else
+            LP.whoRolledEvents:UnregisterAllEvents()
+        end
+    end
     LP.SkinAllRolls()
+    if LP.preview then LP.TagRollButtons(LP.preview) end
+end
+
+-- A sample popup for the options page, made from Blizzard's own template so it
+-- takes this skin exactly. It has no roll, so the template's roll scripts are cleared.
+LP.SAMPLE_DROP = { rollInfos = {
+    { playerName = "Aleya",  playerClass = "MAGE",    state = Enum.EncounterLootDropRollState.NeedMainSpec, roll = 87 },
+    { playerName = "Borin",  playerClass = "PALADIN", state = Enum.EncounterLootDropRollState.Greed,        roll = 42 },
+    { playerName = "Cira",   playerClass = "ROGUE",   state = Enum.EncounterLootDropRollState.Greed,        roll = 15 },
+    { playerName = "Dunmar", playerClass = "HUNTER",  state = Enum.EncounterLootDropRollState.Pass },
+} }
+
+-- Shared with the Roll Window (EllesmereUIBlizzardSkin_LootRollWindow.lua).
+ns.LootRollPick, ns.LootRollSample = LP.RollPick, LP.SAMPLE_DROP
+
+function LP.Preview(show)
+    local f = LP.preview
+    if show == nil then return f ~= nil and f:IsShown() end
+    if not show then
+        if f then f:Hide() end
+        return
+    end
+    if not f then
+        f = CreateFrame("Frame", nil, UIParent, "GroupLootFrameTemplate")
+        f:UnregisterAllEvents()
+        f:SetScript("OnShow", nil)
+        f:SetScript("OnHide", nil)
+        f:SetScript("OnEvent", nil)
+        f:SetScript("OnUpdate", nil)
+        local host = f.LootButtonContainer or f
+        for name in pairs(LP.ROLL_BUTTON_KEYS) do
+            if host[name] then host[name]:SetScript("OnClick", nil) end
+        end
+        if host.TransmogButton then host.TransmogButton:Hide() end
+        if f.IconFrame then
+            f.IconFrame:SetScript("OnEnter", nil)
+            f.IconFrame:SetScript("OnClick", nil)
+            f.IconFrame.Icon:SetTexture("Interface\\Icons\\INV_Sword_04")
+        end
+        local quality = Enum.ItemQuality.Epic
+        local r, g, b = C_Item.GetItemQualityColor(quality)
+        f.Name:SetText(EllesmereUI.L("Sample Item"))
+        f.Name:SetVertexColor(r, g, b)
+        if f.Timer then f.Timer:SetValue(40000) end
+        local d = GetFFD(f)
+        d.sampleQuality, d.drop = quality, LP.SAMPLE_DROP
+        LP.preview = f
+    end
+    local c = _G.GroupLootContainer
+    f:ClearAllPoints()
+    if c and c:GetBottom() then
+        f:SetPoint("BOTTOM", c, "BOTTOM")
+    else
+        f:SetPoint("BOTTOM", UIParent, "BOTTOM", 0, 250)
+    end
+    f:Show()
+    LP.SkinRollFrame(f)
 end
 
 WSkin.RegisterWindow({

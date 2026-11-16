@@ -33,6 +33,8 @@ EllesmereUIBlizzardSkin_WindowPacks.lua
 EllesmereUIBlizzardSkin_MerchantBulkBuy.lua
 # The Mail card's Alt List beside Send Mail (WoW Forever: with Guild and Friends tabs)
 EllesmereUIBlizzardSkin_MailAlts.lua
+# The Loot Roll Popups card's Roll Window: every roll as a row, in place of the popups
+EllesmereUIBlizzardSkin_LootRollWindow.lua
 # WoW Forever only: plain window treatment + stats sidebar for the character sheet
 EllesmereUIBlizzardSkin_CharacterSheetForever.lua
 # WoW Forever only: the stock friends list under the standard window treatment
