@@ -2630,6 +2630,37 @@ initFrame:SetScript("OnEvent", function(self)
         return y
     end
 
+    local function BuildLootRollContent(parent, y)
+        local W = EllesmereUI.Widgets
+        local _, h
+
+        _, h = WSCardSection(parent, "QUALITY OF LIFE", y);  y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Who Rolled",
+              tooltip="Counts the group's Need, Greed and Pass picks on each roll button, and lists who picked it and what they rolled when you hover it.",
+              getValue=function()
+                  return EllesmereUIDB and EllesmereUIDB.lootRollWhoRolled == true
+              end,
+              setValue=function(v)
+                  if not EllesmereUIDB then EllesmereUIDB = {} end
+                  EllesmereUIDB.lootRollWhoRolled = v
+                  if EllesmereUI._LootRoll_SetWhoRolled then EllesmereUI._LootRoll_SetWhoRolled(v) end
+              end },
+            { type="toggle", text="Show Preview",
+              tooltip="Shows a sample roll popup where roll popups appear, with made-up picks. Nothing is rolled.",
+              disabled=function() return not EllesmereUI._LootRoll_Preview end,
+              getValue=function()
+                  return EllesmereUI._LootRoll_Preview and EllesmereUI._LootRoll_Preview() or false
+              end,
+              setValue=function(v)
+                  if EllesmereUI._LootRoll_Preview then EllesmereUI._LootRoll_Preview(v) end
+              end }
+        ); y = y - h
+
+        return y
+    end
+
     ---------------------------------------------------------------------------
     --  Mail card, ALT LIST section: the Alt List beside Send Mail
     --  (EllesmereUIBlizzardSkin_MailAlts.lua, ns.MailAlts), whatever the card's
@@ -3119,6 +3150,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if not EllesmereUIDB then EllesmereUIDB = {} end
                 EllesmereUIDB.reskinLootRoll = v
             end,
+            buildContent = BuildLootRollContent,
         },
         {
             key   = "loothistory",
